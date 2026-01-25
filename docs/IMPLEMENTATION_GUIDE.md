@@ -40,7 +40,7 @@ GET  /events/{id}                        - Get event details
 
 **Database Credentials:**
 - Username: `admin`
-- Password: `admin123` (via `DB_PASSWORD` env var)
+- Password: `your_password` (via `DB_PASSWORD` env var)
 
 ### 2. AI Management Service (Port 8001)
 **Purpose:** Centralized LLM provider abstraction with response caching
@@ -139,7 +139,7 @@ docker compose up -d
 ### Check Service Health
 ```bash
 # Demo Domain
-curl -u admin:admin123 http://localhost:8000/health
+curl -u admin:{PASSWORD} http://localhost:8000/health
 
 # AI Management
 curl http://localhost:8001/health
@@ -163,9 +163,9 @@ docker compose down
 ### Environment Variables (`.env`)
 ```
 # Database
-DB_PASSWORD=admin123
+DB_PASSWORD=your_password
 API_USERNAME=admin
-API_PASSWORD=admin123
+API_PASSWORD=your_password
 
 # OpenAI (optional)
 OPENAI_API_KEY=your_key_here

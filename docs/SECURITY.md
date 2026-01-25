@@ -63,7 +63,7 @@ db_config = {
     'port': os.getenv('DB_PORT', '5432'),
     'database': os.getenv('DB_NAME', 'campaign_demo'),
     'user': os.getenv('DB_USER', 'admin'),
-    'password': os.getenv('DB_PASSWORD', 'admin123'),  # ← From .env
+    'password': os.getenv('DB_PASSWORD', 'your_password'),  # ← From .env
 }
 ```
 
@@ -134,7 +134,7 @@ class DemoDomainClient:
 client = DemoDomainClient(
     base_url=os.getenv('DEMO_DOMAIN_URL'),
     username=os.getenv('DEMO_DOMAIN_USER', 'admin'),
-    password=os.getenv('DEMO_DOMAIN_PASSWORD', 'admin123')
+    password=os.getenv('DEMO_DOMAIN_PASSWORD', 'your_password')
 )
 ```
 
@@ -177,7 +177,7 @@ CACHE_TTL=3600                # Cache expiration in seconds
 # ==========================================
 DEMO_DOMAIN_URL=http://demo-domain-api:8000
 DEMO_DOMAIN_USER=admin
-DEMO_DOMAIN_PASSWORD=admin123
+DEMO_DOMAIN_PASSWORD=your_password
 AI_MANAGEMENT_URL=http://ai-management:8001
 ```
 
@@ -270,7 +270,7 @@ docker compose up -d
 
 ```bash
 # Correct credentials - Should work
-curl -u admin:admin123 http://localhost:8000/health
+curl -u admin:{PASSWORD} http://localhost:8000/health
 
 # Wrong credentials - Should fail (401)
 curl -u admin:wrongpass http://localhost:8000/health

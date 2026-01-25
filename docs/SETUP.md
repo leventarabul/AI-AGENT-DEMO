@@ -59,7 +59,7 @@ redis                 Up 2 sec    0.0.0.0:6379->6379/tcp
 ```bash
 # Set credentials (from .env file)
 export USERNAME=admin
-export PASSWORD=admin123
+export PASSWORD=your_password
 
 # Test Demo Domain health
 curl -u $USERNAME:$PASSWORD http://localhost:8000/health
@@ -88,7 +88,7 @@ cp .env.example .env
 # ==========================================
 # DATABASE
 # ==========================================
-DB_PASSWORD=admin123
+DB_PASSWORD=your_password
 DB_USER=admin
 DB_NAME=campaign_demo
 DB_HOST=postgres          # Docker service name
@@ -98,7 +98,7 @@ DB_PORT=5432
 # API AUTHENTICATION
 # ==========================================
 API_USERNAME=admin
-API_PASSWORD=admin123
+API_PASSWORD=your_password
 
 # ==========================================
 # AI SERVICE KEYS (Optional)
@@ -111,7 +111,7 @@ ANTHROPIC_API_KEY=       # Leave empty if no key
 # ==========================================
 DEMO_DOMAIN_URL=http://demo-domain-api:8000
 DEMO_DOMAIN_USER=admin
-DEMO_DOMAIN_PASSWORD=admin123
+DEMO_DOMAIN_PASSWORD=your_password
 AI_MANAGEMENT_URL=http://ai-management:8001
 
 # ==========================================
@@ -455,7 +455,7 @@ docker compose logs --tail=50
 #!/bin/bash
 echo "=== Service Health Check ==="
 echo "Demo Domain:"
-curl -s -u admin:admin123 http://localhost:8000/health | jq .
+curl -s -u admin:{PASSWORD} http://localhost:8000/health | jq .
 echo "AI Management:"
 curl -s http://localhost:8001/health | jq .
 echo "PostgreSQL:"
