@@ -283,6 +283,132 @@ Action required:
 - Re-submit for code review
 ```
 
+## Testing Agent (Automated Quality Assurance)
+
+TestingAgent automatically runs tests and decides: pass → Done, or fail → Development Waiting.
+
+### Workflow
+
+1. Receives webhook when task status → "Testing"
+2. Executes pytest suite (unit, integration tests)
+3. Collects metrics:
+   - Test pass rate
+   - Code coverage
+   - Performance
+   - No critical issues
+4. **If Passed** → Posts success comment with metrics, task transitions to "Done"
+5. **If Failed** → Posts failure details with error logs, task goes back to "Development Waiting"
+
+### Endpoints
+
+- **POST /webhooks/testing** - Receive testing events
+  - Filters: `status = "Testing"` or `"Test Ready"`
+  - Returns: Test execution results with pass/fail decision
+
+### Example
+
+```bash
+# Send mock testing webhook
+python examples/test_testing_webhook.py
+
+# Monitor tests in logs
+docker logs agents-service -f
+```
+
+**Test Results:**
+
+✅ **All Tests Passed** → Comment:
+```
+✅ TESTS PASSED
+
+All automated tests passed successfully!
+
+Test Results:
+- Tests Passed: 42/42
+- Code Coverage: 85%
+
+Tested Items:
+- Unit tests executed
+- Integration tests executed
+- Code coverage: 85%
+- No security vulnerabilities
+- Performance acceptable
+
+Status: Task is ready for production deployment! ✨
+```
+
+❌ **Tests Failed** → Comment:
+```
+❌ TESTS FAILED
+
+Some tests failed during automated testing.
+
+Summary: 3 test(s) failed out of 42
+- Tests Passed: 39/42
+- Tests Failed: 3
+- Code Coverage: 60%
+
+Failed Tests:
+
+**test_user_authentication_failure**
+```
+AssertionError: Expected 401, got 200
+```
+
+**test_oauth_token_refresh**
+```
+TimeoutError: Token refresh endpoint unresponsive
+```
+
+Action Required:
+- Review the test failures above
+- Fix the code to make tests pass
+- Commit and push the fixes
+- Re-submit to testing
+```
+
+## Complete Workflow
+
+```
+Development Waiting
+    ↓ [JiraAgent: code + tests]
+In Review / Code Ready
+    ↓ [CodeReviewAgent: AI quality check]
+    ├─ ❌ FAIL → Development Waiting
+    └─ ✅ PASS → Testing
+         ↓ [TestingAgent: pytest execution]
+         ├─ ❌ FAIL → Development Waiting
+         └─ ✅ PASS → Done ✨
+```
+
+### Setup All Agents
+
+```env
+# .env
+JIRA_URL=https://your-jira.atlassian.net
+JIRA_USERNAME=your-email@example.com
+JIRA_API_TOKEN=your-jira-api-token
+GIT_REPO_PATH=/path/to/repo
+AI_MANAGEMENT_URL=http://ai-management-service:8001
+OPENAI_API_KEY=sk-proj-...
+```
+
+### Test Full Pipeline
+
+```bash
+# 1. Send task to development
+python agents/examples/test_jira_webhook.py
+
+# 2. Trigger code review (once code ready)
+python agents/examples/test_code_review_webhook.py
+
+# 3. Trigger testing (once approved)
+python agents/examples/test_testing_webhook.py
+
+# 4. Monitor in logs
+docker logs agents-service -f
+```
+
 ## Running as Workers
 
 ### Event Registration Worker

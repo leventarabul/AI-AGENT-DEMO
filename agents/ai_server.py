@@ -6,6 +6,7 @@ import os
 from src.agents.event_agent import EventAgent
 from src.agents.jira_agent import JiraAgent
 from src.agents.code_review_agent import CodeReviewAgent
+from src.agents.testing_agent import TestingAgent
 
 app = FastAPI()
 
@@ -154,4 +155,60 @@ async def code_review_webhook(
             "issue_key": issue_key,
             "status_current": status,
             "message": "Only 'In Review' or 'Code Ready' status is processed"
+        }
+
+async def _run_tests_in_background(issue_key: str, test_files: List[str] = None):
+    """Background task to run tests with TestingAgent."""
+    try:
+        agent = TestingAgent(
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+            repo_path=os.getenv("GIT_REPO_PATH", "."),
+        )
+        result = await agent.run_tests(issue_key, test_files)
+        print(f"✅ Testing for {issue_key} completed:\n{result}")
+    except Exception as e:
+        print(f"❌ Error running tests for {issue_key}: {e}")
+
+
+class TestingWebhookRequest(BaseModel):
+    """Testing webhook payload."""
+    webhookEvent: str
+    issue: Dict[str, Any]
+    test_files: Optional[List[str]] = None
+
+
+@app.post("/webhooks/testing")
+async def testing_webhook(
+    request: TestingWebhookRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Receive testing webhook events.
+    Filters for 'Testing' status, runs tests, transitions to Done or back to Development.
+    """
+    print(f"🧪 Testing webhook received: {request.webhookEvent}")
+    
+    issue = request.issue
+    issue_key = issue.get("key", "")
+    status = issue.get("fields", {}).get("status", {}).get("name", "")
+    
+    # Only process if in "Testing" status
+    if status == "Testing" or status == "Test Ready":
+        print(f"  Running tests: {issue_key}")
+        
+        # Dispatch to background task
+        background_tasks.add_task(_run_tests_in_background, issue_key, request.test_files)
+        return {
+            "status": "accepted",
+            "issue_key": issue_key,
+            "message": "Testing dispatched"
+        }
+    else:
+        return {
+            "status": "skipped",
+            "issue_key": issue_key,
+            "status_current": status,
+            "message": "Only 'Testing' or 'Test Ready' status is processed"
         }
