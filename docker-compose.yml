@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # Demo Domain Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: demo-domain-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin123}
+      POSTGRES_DB: campaign_demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./demo-domain/src/demo-environment/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d campaign_demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  demo-domain-api:
+    build:
+      context: ./demo-domain
+      dockerfile: Dockerfile
+    container_name: demo-domain-api
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: campaign_demo
+      DB_USER: admin
+      DB_PASSWORD: ${DB_PASSWORD:-admin123}
+      API_USERNAME: ${API_USERNAME:-admin}
+      API_PASSWORD: ${API_PASSWORD:-admin123}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    command: python api_server.py
+
+  demo-domain-processor:
+    build:
+      context: ./demo-domain
+      dockerfile: Dockerfile
+    container_name: demo-domain-processor
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: campaign_demo
+      DB_USER: admin
+      DB_PASSWORD: ${DB_PASSWORD:-admin123}
+      POLL_INTERVAL: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    command: python job_processor.py
+
+  # AI Management Service
+  redis:
+    image: redis:7-alpine
+    container_name: ai-management-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  ai-management:
+    build:
+      context: ./ai-management
+      dockerfile: Dockerfile
+    container_name: ai-management-service
+    ports:
+      - "8001:8001"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      AI_SERVICE_PORT: 8001
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    command: python ai_server.py
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge
