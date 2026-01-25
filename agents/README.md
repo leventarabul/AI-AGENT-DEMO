@@ -169,6 +169,56 @@ prompt = build_ai_prompt(
 # pass `prompt` to ai-management /generate
 ```
 
+## Jira Agent (Automated Development)
+
+JiraAgent automates task development from Jira:
+1. Receives webhook when task status → "Development Waiting"
+2. Generates code using AI
+3. Generates unit tests
+4. Commits and pushes to feature branch
+5. Creates pull request
+6. Updates Jira task status
+
+### Setup
+
+```env
+JIRA_URL=https://your-jira.atlassian.net
+JIRA_USERNAME=your-email@example.com
+JIRA_API_TOKEN=your-jira-api-token
+GIT_REPO_PATH=/path/to/repo
+AI_MANAGEMENT_URL=http://ai-management-service:8001
+OPENAI_API_KEY=sk-proj-...
+```
+
+### Endpoints
+
+- **POST /webhooks/jira** - Receive Jira webhook events
+  - Filters: `status = "Development Waiting"`
+  - Processes: code gen → tests → commit → PR → Jira update
+
+### Example
+
+```bash
+# 1. Set up environment
+export JIRA_URL="https://your-jira.atlassian.net"
+export JIRA_USERNAME="you@example.com"
+export JIRA_API_TOKEN="your-token"
+export GIT_REPO_PATH="$(pwd)"
+
+# 2. Send mock webhook
+python examples/test_jira_webhook.py
+
+# 3. Monitor background task (logs in agents container)
+docker logs agents-service -f
+```
+
+After webhook is received:
+- Task status updates to "In Progress"
+- Code is generated and committed
+- Tests are written
+- PR is created
+- Task status updates to "In Review"
+
 ## Running as Workers
 
 ### Event Registration Worker
