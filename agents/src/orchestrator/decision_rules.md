@@ -106,6 +106,29 @@ Context Requirements: [What fields must be in the intent context]
 
 ---
 
+### development_flow
+
+**Description:** SDLC development pipeline triggered by Jira status change
+
+**Agents:**
+1. `development_agent` — Create or update code files, commit, and push
+2. `code_review_agent` — Review code changes and provide feedback
+3. `testing_agent` — Run tests and validate changes
+
+**Context Requirements:**
+- `jira_issue_key` (str) — Jira issue key (e.g., "PROJ-123")
+- `jira_issue_status` (str) — Jira issue status (e.g., "Waiting for Development")
+- `code_changes` (dict) — Map of file paths to file contents to create/update
+- `branch_name` (str, optional) — Git branch name (default: derive from issue key)
+
+**Parallelizable:** None (strict sequential order required)
+
+**Execution Order:** Sequential (each agent waits for previous to complete)
+
+**Error Handling:** Pipeline stops immediately on first agent failure
+
+---
+
 ## Adding a New Rule
 
 1. Define the intent type name (lowercase, snake_case)
@@ -125,6 +148,7 @@ Context Requirements: [What fields must be in the intent context]
 | 2026-01-25 | analyze_earnings | Initial rule |
 | 2026-01-25 | review_code | Initial rule |
 | 2026-01-25 | run_tests | Initial rule |
+| 2026-01-25 | development_flow | Added SDLC pipeline for Jira-triggered development |
 
 ## Validation
 

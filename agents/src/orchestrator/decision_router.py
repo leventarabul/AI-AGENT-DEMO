@@ -121,6 +121,28 @@ DECISION_RULES = {
         ],
         parallelizable=[],
     ),
+    
+    "development_flow": ExecutionPlan(
+        intent_type="development_flow",
+        tasks=[
+            AgentTask(
+                agent="development_agent",
+                task="Create or update code files, commit, and push",
+                params={"action": "develop"},
+            ),
+            AgentTask(
+                agent="code_review_agent",
+                task="Review code changes and provide feedback",
+                params={"action": "review"},
+            ),
+            AgentTask(
+                agent="testing_agent",
+                task="Run tests and validate changes",
+                params={"action": "validate"},
+            ),
+        ],
+        parallelizable=[],  # Strict sequential execution
+    ),
 }
 
 # Context requirements per intent
@@ -143,6 +165,11 @@ CONTEXT_REQUIREMENTS = {
     ],
     "run_tests": [
         "environment",
+    ],
+    "development_flow": [
+        "jira_issue_key",
+        "jira_issue_status",
+        "code_changes",
     ],
 }
 
