@@ -2,6 +2,8 @@
 
 Autonomous agents that interact with the demo-domain API to perform tasks like event registration, rule matching, and earnings analysis.
 
+**See also:** [Knowledge Management](../../knowledge_management.md) - Rules for safe and effective use of the knowledge base.
+
 ## Overview
 
 The agents module contains implementations of agents that:

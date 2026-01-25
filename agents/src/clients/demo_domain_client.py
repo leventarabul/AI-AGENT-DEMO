@@ -60,7 +60,8 @@ class DemoDomainClient:
         merchant_id: str,
         amount: float,
         transaction_date: str,
-        event_data: Optional[Dict[str, Any]] = None
+        event_data: Optional[Dict[str, Any]] = None,
+        provision_code: Optional[str] = None
     ) -> Dict[str, Any]:
         """Register an event"""
         
@@ -73,6 +74,9 @@ class DemoDomainClient:
             "transaction_date": transaction_date,
             "event_data": event_data or {}
         }
+        
+        if provision_code:
+            payload["provision_code"] = provision_code
         
         try:
             response = await self.client.post(

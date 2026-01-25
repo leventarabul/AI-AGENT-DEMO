@@ -62,6 +62,9 @@ class AIManagementClient:
         }
         
         try:
+            # Ensure HTTP client is initialized
+            if not self.client:
+                self.client = httpx.AsyncClient(timeout=self.timeout)
             response = await self.client.post(
                 f"{self.base_url}/generate",
                 json=payload

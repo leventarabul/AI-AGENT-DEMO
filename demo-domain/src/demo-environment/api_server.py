@@ -47,6 +47,7 @@ class EventData(BaseModel):
     amount: float
     transaction_date: str
     event_data: Optional[Dict[str, Any]] = None
+    provision_code: Optional[str] = None
 
 
 class EventResponse(BaseModel):
@@ -294,8 +295,8 @@ async def create_event(event: EventData, background_tasks: BackgroundTasks, auth
         cur.execute("""
             INSERT INTO events 
             (event_code, customer_id, transaction_id, merchant_id, amount, 
-             transaction_date, event_data, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             transaction_date, provision_code, event_data, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, event_code, customer_id, transaction_id, amount, status, created_at, recorded_at
         """, (
             event.event_code,
@@ -304,6 +305,7 @@ async def create_event(event: EventData, background_tasks: BackgroundTasks, auth
             event.merchant_id,
             event.amount,
             event.transaction_date,
+            event.provision_code,
             json.dumps(event.event_data) if event.event_data else json.dumps({}),
             'pending'
         ))

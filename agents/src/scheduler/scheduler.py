@@ -67,30 +67,36 @@ class AgentScheduler:
             from src.clients.jira_client import JiraClient
             self._jira_client = JiraClient(
                 jira_url=os.getenv("JIRA_URL"),
-                jira_username=os.getenv("JIRA_USERNAME"),
-                jira_token=os.getenv("JIRA_API_TOKEN"),
+                username=os.getenv("JIRA_USERNAME"),
+                api_token=os.getenv("JIRA_API_TOKEN"),
             )
         return self._jira_client
     
     async def _process_development_waiting(self):
-        """Find and process all 'Development Waiting' tasks."""
+        """Find and process all 'Waiting Development' tasks."""
         try:
-            logger.info("🔍 Searching for 'Development Waiting' tasks...")
+            logger.info("🔍 Searching for 'Waiting Development' tasks...")
             jira_client = await self._get_jira_client()
             
-            # JQL to find all Development Waiting tasks
-            jql = 'status = "Development Waiting" AND assignee is EMPTY'
+            # JQL to find all Waiting Development tasks
+            jql = 'status = "Waiting Development" AND assignee is EMPTY'
             issues = await jira_client.search_issues(jql)
             
             if not issues:
-                logger.info("  No 'Development Waiting' tasks found")
+                logger.info("  No 'Waiting Development' tasks found")
                 return
             
             logger.info(f"  Found {len(issues)} task(s) to process")
             
-            # Process each issue
+            # Process each issue (key or id fallback)
             for issue in issues:
-                issue_key = issue.get('key')
+                if isinstance(issue, dict):
+                    issue_key = issue.get('key') or issue.get('id') or str(issue)
+                else:
+                    issue_key = str(issue)
+                if not issue_key:
+                    logger.warning(f"  Skipping issue without key: {issue}")
+                    continue
                 await self._trigger_jira_agent(issue_key)
         
         except Exception as e:
@@ -102,8 +108,8 @@ class AgentScheduler:
             logger.info("🔍 Searching for 'In Review' tasks...")
             jira_client = await self._get_jira_client()
             
-            # JQL to find all In Review tasks
-            jql = 'status = "In Review"'
+            # JQL to find all review-ready tasks
+            jql = 'status in ("Code Review", "In Review")'
             issues = await jira_client.search_issues(jql)
             
             if not issues:

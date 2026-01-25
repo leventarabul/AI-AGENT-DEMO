@@ -4,9 +4,9 @@ import subprocess
 import tempfile
 import httpx
 from typing import Optional, Dict, Any
-from knowledge.context_loader import build_ai_prompt
-from clients.jira_client import JiraClient
-from clients.ai_management_client import AIManagementClient
+from src.knowledge.context_loader import build_ai_prompt
+from src.clients.jira_client import JiraClient
+from src.clients.ai_management_client import AIManagementClient
 
 
 class JiraAgent:
@@ -41,9 +41,12 @@ class JiraAgent:
         
         if isinstance(task_description, dict):
             task_description = self._extract_text_from_rich_text(task_description)
+        if task_description is None:
+            task_description = ""
         
         print(f"  Title: {task_title}")
-        print(f"  Description: {task_description[:100]}...")
+        desc_preview = task_description[:100] + ("..." if len(task_description) > 100 else "")
+        print(f"  Description: {desc_preview}")
         
         # Step 1: Generate code
         code_result = await self.generate_code(
@@ -83,6 +86,9 @@ class JiraAgent:
             f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
         )
         
+        # Move issue to Code Review (fallback to In Review if not available)
+        await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])        
+        
         return {
             "issue_key": issue_key,
             "branch": branch_name,
@@ -91,6 +97,26 @@ class JiraAgent:
             "commit_sha": commit_sha,
             "pr": pr_info,
         }
+
+    async def _transition_to_status(self, issue_key: str, target_names: list) -> None:
+        """Transition Jira issue to one of the desired statuses by name."""
+        try:
+            transitions = await self.jira_client.get_transitions(issue_key)
+            target = None
+            for name in target_names:
+                for t in transitions:
+                    if t.get("name") == name:
+                        target = t
+                        break
+                if target:
+                    break
+            if not target:
+                print(f"  ⚠️ No matching transition found for {target_names}; skipping status change")
+                return
+            await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
+            print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
+        except Exception as e:
+            print(f"  ⚠️ Transition error for {issue_key}: {e}")
     
     async def generate_code(
         self, task_title: str, task_description: str, labels: list
@@ -168,11 +194,14 @@ class JiraAgent:
         print(f"  🔧 Committing and pushing...")
         
         # Create branch
-        subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=self.git_repo_path,
-            check=True,
-        )
+        # If repo is not a git repository, skip git operations
+        is_git_repo = os.path.isdir(os.path.join(self.git_repo_path, ".git"))
+        if is_git_repo:
+            subprocess.run(
+                ["git", "checkout", "-b", branch_name],
+                cwd=self.git_repo_path,
+                check=True,
+            )
         
         # Write code file
         code_path = os.path.join(self.git_repo_path, f"agents/src/agents/{issue_key}_impl.py")
@@ -186,36 +215,40 @@ class JiraAgent:
         with open(test_path, "w") as f:
             f.write(tests)
         
-        # Configure git
-        subprocess.run(
-            ["git", "config", "user.name", self.git_user_name],
-            cwd=self.git_repo_path,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", self.git_user_email],
-            cwd=self.git_repo_path,
-        )
-        
-        # Add and commit
-        subprocess.run(
-            ["git", "add", code_path, test_path],
-            cwd=self.git_repo_path,
-            check=True,
-        )
-        result = subprocess.run(
-            ["git", "commit", "-m", f"[{issue_key}] {task_title}"],
-            cwd=self.git_repo_path,
-            capture_output=True,
-            text=True,
-        )
-        
-        commit_sha = result.stdout.split("(")[0].strip() if result.returncode == 0 else "unknown"
-        
-        # Push to remote
-        subprocess.run(
-            ["git", "push", "-u", "origin", branch_name],
-            cwd=self.git_repo_path,
-        )
+        commit_sha = "unknown"
+        if is_git_repo:
+            # Configure git
+            subprocess.run(
+                ["git", "config", "user.name", self.git_user_name],
+                cwd=self.git_repo_path,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", self.git_user_email],
+                cwd=self.git_repo_path,
+            )
+            
+            # Add and commit
+            subprocess.run(
+                ["git", "add", code_path, test_path],
+                cwd=self.git_repo_path,
+                check=True,
+            )
+            result = subprocess.run(
+                ["git", "commit", "-m", f"[{issue_key}] {task_title}"],
+                cwd=self.git_repo_path,
+                capture_output=True,
+                text=True,
+            )
+            
+            commit_sha = result.stdout.split("(")[0].strip() if result.returncode == 0 else "unknown"
+            
+            # Push to remote
+            subprocess.run(
+                ["git", "push", "-u", "origin", branch_name],
+                cwd=self.git_repo_path,
+            )
+        else:
+            print("  ⚠️ No git repo detected; files written without commit/push")
         
         return commit_sha
     

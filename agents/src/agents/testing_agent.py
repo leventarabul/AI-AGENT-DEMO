@@ -2,7 +2,7 @@ import subprocess
 import json
 import os
 from typing import Dict, Any, List
-from clients.jira_client import JiraClient
+from src.clients.jira_client import JiraClient
 
 
 class TestingAgent:

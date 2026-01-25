@@ -44,7 +44,8 @@ class EventAgent:
         merchant_id: str,
         amount: float,
         transaction_date: Optional[str] = None,
-        event_data: Optional[Dict[str, Any]] = None
+        event_data: Optional[Dict[str, Any]] = None,
+        provision_code: Optional[str] = None
     ) -> Dict[str, Any]:
         """Register an event with demo-domain"""
         
@@ -64,7 +65,8 @@ class EventAgent:
                     merchant_id=merchant_id,
                     amount=amount,
                     transaction_date=transaction_date,
-                    event_data=event_data
+                    event_data=event_data,
+                    provision_code=provision_code
                 )
                 
                 logger.info(f"Event registered: {response['id']}")
@@ -118,6 +120,30 @@ class EventAgent:
                 logger.error(f"❌ AI suggestion failed: {e}, using base amount")
                 return base_amount
     
+    async def get_provision_code_rule(
+        self,
+        provision_code: str,
+        demo_domain_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get campaign rule by provision code (from SCRUM-1)
+        """
+        try:
+            url = demo_domain_url or self.demo_domain_url
+            import httpx
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(
+                    f"{url}/campaign_rule/{provision_code}",
+                    auth=(self.demo_domain_user, self.demo_domain_pass)
+                )
+                if response.status_code != 200:
+                    logger.error(f"Failed to get campaign rule for {provision_code}: {response.text}")
+                    return {}
+                return response.json()
+        except Exception as e:
+            logger.error(f"Error getting campaign rule: {e}")
+            return {}
+    
     async def register_event_with_ai_reward(
         self,
         event_code: str,
@@ -126,7 +152,8 @@ class EventAgent:
         merchant_id: str,
         transaction_amount: float,
         campaign_id: int = 1,  # Default campaign for AI rewards
-        event_data: Optional[Dict[str, Any]] = None
+        event_data: Optional[Dict[str, Any]] = None,
+        provision_code: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Register event with AI-suggested reward
@@ -135,6 +162,7 @@ class EventAgent:
         2. Ask AI for reward suggestion
         3. Register event with transaction amount
         4. Create earning with AI-suggested reward
+        5. If provision_code provided, lookup campaign rule
         """
         
         # 1. Get customer history
@@ -165,10 +193,18 @@ class EventAgent:
             transaction_id=transaction_id,
             merchant_id=merchant_id,
             amount=transaction_amount,  # ← Müşterinin ödediği para
-            event_data=event_data
+            event_data=event_data,
+            provision_code=provision_code
         )
         
-        # 5. Create earning with AI-suggested REWARD
+        # 5. If provision_code provided, lookup campaign rule (SCRUM-1)
+        campaign_rule = None
+        if provision_code:
+            campaign_rule = await self.get_provision_code_rule(provision_code)
+            if campaign_rule:
+                logger.info(f"Applied campaign rule for {provision_code}: {campaign_rule}")
+        
+        # 6. Create earning with AI-suggested REWARD
         # Note: Bu ideal olarak demo-domain'de bir endpoint olmalı
         # Şimdilik event_data'ya ekliyoruz
         
@@ -176,6 +212,8 @@ class EventAgent:
             "event_id": event_response.get("id"),
             "transaction_amount": transaction_amount,
             "suggested_reward": suggested_reward,
+            "provision_code": provision_code,
+            "campaign_rule": campaign_rule,
             "ai_prompt": prompt,
             "customer_history_count": len(customer_events)
         }

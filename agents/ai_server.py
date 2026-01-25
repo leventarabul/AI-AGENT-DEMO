@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List, Tuple
 import asyncio
@@ -72,6 +72,7 @@ async def ai_event(request: AIEventRequest):
 
 async def _process_jira_task_in_background(issue_key: str):
     """Background task to process Jira issue with AI agent."""
+    print(f"\n🚀 [BACKGROUND] Starting task processing for {issue_key}")
     try:
         agent = JiraAgent(
             jira_url=os.getenv("JIRA_URL"),
@@ -81,9 +82,11 @@ async def _process_jira_task_in_background(issue_key: str):
             git_repo_path=os.getenv("GIT_REPO_PATH", "/tmp/repo"),
         )
         result = await agent.process_task(issue_key)
-        print(f"✅ Jira task {issue_key} processed successfully:\n{result}")
+        print(f"✅ [BACKGROUND] Jira task {issue_key} processed successfully:\n{result}")
     except Exception as e:
-        print(f"❌ Error processing Jira task {issue_key}: {e}")
+        print(f"❌ [BACKGROUND] Error processing Jira task {issue_key}: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.post("/webhooks/jira")
@@ -99,8 +102,8 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     issue_type = issue.get("fields", {}).get("issuetype", {}).get("name", "")
     status = issue.get("fields", {}).get("status", {}).get("name", "")
     
-    # Only process if in "Development Waiting" status
-    if status == "Development Waiting":
+    # Only process if in "Waiting Development" status
+    if status == "Waiting Development":
         print(f"  Task ready: {issue_key} ({issue_type})")
         # Dispatch to background task
         background_tasks.add_task(_process_jira_task_in_background, issue_key)
@@ -121,6 +124,7 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
 async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str, str]]):
     """Background task to review code with AI agent."""
     try:
+        logger.info(f"📋 Starting code review for {issue_key}")
         agent = CodeReviewAgent(
             ai_management_url=os.getenv("AI_MANAGEMENT_URL"),
             jira_url=os.getenv("JIRA_URL"),
@@ -128,9 +132,9 @@ async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str,
             jira_token=os.getenv("JIRA_API_TOKEN"),
         )
         result = await agent.review_pull_request(issue_key, code_files)
-        print(f"✅ Code review for {issue_key} completed:\n{result}")
+        logger.info(f"✅ Code review for {issue_key} completed:\n{result}")
     except Exception as e:
-        print(f"❌ Error reviewing code for {issue_key}: {e}")
+        logger.error(f"❌ Error reviewing code for {issue_key}: {e}", exc_info=True)
 
 
 class CodeReviewWebhookRequest(BaseModel):
@@ -156,8 +160,8 @@ async def code_review_webhook(
     issue_key = issue.get("key", "")
     status = issue.get("fields", {}).get("status", {}).get("name", "")
     
-    # Only process if in "In Review" status (PR ready for review)
-    if status == "In Review" or status == "Code Ready":
+    # Only process if in review-ready status (PR ready for review)
+    if status in ("In Review", "Code Review", "Code Ready"):
         print(f"  Reviewing: {issue_key}")
         
         # If code_files not provided, extract from PR
@@ -256,12 +260,12 @@ async def api_process_development(background_tasks: BackgroundTasks):
         
         jira_client = JiraClient(
             jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
+            username=os.getenv("JIRA_USERNAME"),
+            api_token=os.getenv("JIRA_API_TOKEN"),
         )
         
-        # Find all Development Waiting tasks
-        jql = 'status = "Development Waiting" AND assignee is EMPTY'
+        # Find all Waiting Development tasks
+        jql = 'status = "Waiting Development" AND assignee is EMPTY'
         issues = await jira_client.search_issues(jql)
         
         if not issues:
@@ -271,16 +275,22 @@ async def api_process_development(background_tasks: BackgroundTasks):
                 "message": "No 'Development Waiting' tasks found"
             }
         
-        # Dispatch each issue to background processing
+        # Dispatch each issue to background processing (key or id)
+        issue_keys = []
         for issue in issues:
-            issue_key = issue.get('key')
-            background_tasks.add_task(_process_jira_task_in_background, issue_key)
+            if isinstance(issue, dict):
+                issue_key = issue.get('key') or issue.get('id') or str(issue)
+            else:
+                issue_key = str(issue)
+            if issue_key:
+                issue_keys.append(issue_key)
+                background_tasks.add_task(_process_jira_task_in_background, issue_key)
         
         return {
             "status": "started",
-            "count": len(issues),
-            "message": f"Started processing {len(issues)} task(s)",
-            "issues": [issue.get('key') for issue in issues]
+            "count": len(issue_keys),
+            "message": f"Started processing {len(issue_keys)} task(s)",
+            "issues": issue_keys
         }
     
     except Exception as e:
@@ -305,12 +315,12 @@ async def api_process_reviews(background_tasks: BackgroundTasks):
         
         jira_client = JiraClient(
             jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
+            username=os.getenv("JIRA_USERNAME"),
+            api_token=os.getenv("JIRA_API_TOKEN"),
         )
         
-        # Find all In Review tasks
-        jql = 'status = "In Review"'
+        # Find all review-ready tasks
+        jql = 'status in ("Code Review", "In Review")'
         issues = await jira_client.search_issues(jql)
         
         if not issues:
@@ -354,8 +364,8 @@ async def api_process_testing(background_tasks: BackgroundTasks):
         
         jira_client = JiraClient(
             jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
+            username=os.getenv("JIRA_USERNAME"),
+            api_token=os.getenv("JIRA_API_TOKEN"),
         )
         
         # Find all Testing tasks
@@ -403,8 +413,8 @@ async def api_process_all(background_tasks: BackgroundTasks):
         
         jira_client = JiraClient(
             jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
+            username=os.getenv("JIRA_USERNAME"),
+            api_token=os.getenv("JIRA_API_TOKEN"),
         )
         
         results = {
@@ -413,16 +423,16 @@ async def api_process_all(background_tasks: BackgroundTasks):
             "testing": []
         }
         
-        # Process Development Waiting
-        dev_jql = 'status = "Development Waiting" AND assignee is EMPTY'
+        # Process Waiting Development
+        dev_jql = 'status = "Waiting Development" AND assignee is EMPTY'
         dev_issues = await jira_client.search_issues(dev_jql)
         for issue in dev_issues:
             issue_key = issue.get('key')
             results["development_waiting"].append(issue_key)
             background_tasks.add_task(_process_jira_task_in_background, issue_key)
         
-        # Process In Review
-        review_jql = 'status = "In Review"'
+        # Process review-ready
+        review_jql = 'status in ("Code Review", "In Review")'
         review_issues = await jira_client.search_issues(review_jql)
         for issue in review_issues:
             issue_key = issue.get('key')

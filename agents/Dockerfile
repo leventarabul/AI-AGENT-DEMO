@@ -12,5 +12,5 @@ COPY . .
 # Port ayarla
 EXPOSE 8002
 
-# Servisi başlat
-CMD ["uvicorn", "ai_server:app", "--host", "0.0.0.0", "--port", "8002", "--reload"]
+# Servisi başlat (--log-level debug için detaylı log)
+CMD ["uvicorn", "ai_server:app", "--host", "0.0.0.0", "--port", "8002", "--log-level", "debug"]

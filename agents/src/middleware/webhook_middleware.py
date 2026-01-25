@@ -1,7 +1,7 @@
 from fastapi import Request, HTTPException
 from typing import Callable
 import os
-from utils.webhook_security import WebhookSecurity
+from src.utils.webhook_security import WebhookSecurity
 
 
 async def verify_jira_webhook_signature(request: Request, call_next: Callable):

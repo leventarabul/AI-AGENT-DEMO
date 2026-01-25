@@ -1,8 +1,8 @@
 import json
 from typing import Dict, Any, List, Tuple
 import httpx
-from clients.ai_management_client import AIManagementClient
-from clients.jira_client import JiraClient
+from src.clients.ai_management_client import AIManagementClient
+from src.clients.jira_client import JiraClient
 
 
 class CodeReviewAgent:
@@ -43,11 +43,44 @@ class CodeReviewAgent:
         """
         print(f"\n📋 Code review started for {issue_key}")
         
+        # If code files not provided, fetch from generated files
+        if not code_files:
+            import os
+            try:
+                code_impl_path = f"/app/agents/src/agents/{issue_key}_impl.py"
+                test_path = f"/app/tests/test_{issue_key}.py"
+                
+                code = ""
+                tests = ""
+                
+                if os.path.exists(code_impl_path):
+                    with open(code_impl_path, "r") as f:
+                        code = f.read()
+                
+                if os.path.exists(test_path):
+                    with open(test_path, "r") as f:
+                        tests = f.read()
+                
+                if code or tests:
+                    code_files = []
+                    if code:
+                        code_files.append((f"{issue_key}_impl.py", code))
+                    if tests:
+                        code_files.append((f"test_{issue_key}.py", tests))
+                    print(f"  📂 Loaded code files from disk")
+            except Exception as e:
+                print(f"  ⚠️ Error loading code files: {e}")
+        
         # Build code context
         code_context = "\n".join([
             f"## File: {fname}\n```python\n{code}\n```"
             for fname, code in code_files
         ])
+        
+        # If still no code context, use generic review
+        if not code_context.strip():
+            print(f"  ⚠️ No code context found for {issue_key}; using generic review")
+            code_context = f"Code for issue {issue_key} (files not provided)"
         
         # AI code review analysis
         review_result = await self._analyze_code(code_context)
@@ -152,10 +185,25 @@ class CodeReviewAgent:
         
         await self.jira_client.add_comment(issue_key, comment)
         
-        # Transition to Testing (requires transition ID mapping)
-        # For now, just post comment as transition would need ID lookup
-        print(f"  ✅ Approved comment posted to {issue_key}")
-        print(f"  📝 (Manual transition to Testing recommended)")
+        # Transition to Testing
+        try:
+            transitions = await self.jira_client.get_transitions(issue_key)
+            target = None
+            for name in ["Testing", "Test Ready", "In Testing"]:
+                for t in transitions:
+                    if t.get("name") == name:
+                        target = t
+                        break
+                if target:
+                    break
+            if target:
+                await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
+                print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
+            else:
+                print(f"  ⚠️ No Testing status found; skipping transition")
+        except Exception as e:
+            print(f"  ⚠️ Transition error: {e}")
+
     
     async def _transition_rejected(self, issue_key: str, issues: List[str]) -> None:
         """Transition task back to Development Waiting and explain issues."""
@@ -175,10 +223,24 @@ class CodeReviewAgent:
         
         await self.jira_client.add_comment(issue_key, comment)
         
-        # Transition to Development Waiting
-        # (requires transition ID mapping)
-        print(f"  ❌ Rejection comment posted to {issue_key}")
-        print(f"  🔄 (Manual transition to Development Waiting recommended)")
+        # Transition back to Development Waiting
+        try:
+            transitions = await self.jira_client.get_transitions(issue_key)
+            target = None
+            for name in ["Waiting Development", "Development Waiting", "Todo"]:
+                for t in transitions:
+                    if t.get("name") == name:
+                        target = t
+                        break
+                if target:
+                    break
+            if target:
+                await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
+                print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
+            else:
+                print(f"  ⚠️ No Development status found; skipping transition")
+        except Exception as e:
+            print(f"  ⚠️ Transition error: {e}")
 
 
 class CodeQualityChecker:

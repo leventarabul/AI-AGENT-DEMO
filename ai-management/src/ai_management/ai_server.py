@@ -124,6 +124,17 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
             except Exception as cache_err:
                 logger.warning(f"Cache set failed: {cache_err}, response still returned")
         
+        # Ensure required fields for response model
+        input_tokens = response.get("input_tokens")
+        output_tokens = response.get("output_tokens")
+        if response.get("token_count") is None:
+            try:
+                response["token_count"] = (
+                    (int(input_tokens) if input_tokens is not None else 0) +
+                    (int(output_tokens) if output_tokens is not None else 0)
+                )
+            except Exception:
+                response["token_count"] = 0
         response["cached"] = False
         logger.info("✅ Request completed successfully")
         return GenerateResponse(**response)

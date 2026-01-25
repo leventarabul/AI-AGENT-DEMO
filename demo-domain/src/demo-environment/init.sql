@@ -34,6 +34,7 @@ CREATE TABLE events (
     merchant_id VARCHAR(255) NOT NULL,
     amount DECIMAL(12, 2) NOT NULL,
     transaction_date TIMESTAMP NOT NULL,
+    provision_code VARCHAR(255),
     event_data JSONB,
     status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'failed', 'skipped')),
     matched_rule_id INTEGER REFERENCES campaign_rules(id),

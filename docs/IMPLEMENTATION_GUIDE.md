@@ -4,6 +4,8 @@
 
 A distributed microservices architecture for campaign management and event processing with autonomous agents. Three independent services communicate via REST APIs with proper authentication, caching, and background processing.
 
+**See also:** [Knowledge Management](../knowledge_management.md) - Understanding how agents access and maintain shared knowledge.
+
 ## Services
 
 ### 1. Demo Domain Service (Port 8000)

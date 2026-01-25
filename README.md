@@ -93,6 +93,7 @@ Autonomous agents for event registration and campaign management.
 ```
 /projects
 ├── README.md                          ← You are here (overview)
+├── knowledge_management.md            ← Knowledge base governance & agent rules
 ├── docs/
 │   ├── IMPLEMENTATION_GUIDE.md        ← System architecture & design
 │   ├── PROJECT_ECOSYSTEM.md           ← Services overview
@@ -239,6 +240,7 @@ docker compose up -d
 ## 📖 Full Documentation
 
 For detailed information, see:
+- **Knowledge Management:** [knowledge_management.md](knowledge_management.md) - How to maintain and access shared knowledge
 - **System Architecture:** [docs/IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md)
 - **Services Overview:** [docs/PROJECT_ECOSYSTEM.md](docs/PROJECT_ECOSYSTEM.md)
 - **Setup Guide:** [docs/SETUP.md](docs/SETUP.md)

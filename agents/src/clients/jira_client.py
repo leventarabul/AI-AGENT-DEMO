@@ -36,12 +36,16 @@ class JiraClient:
             resp.raise_for_status()
             return resp.json()
     
-    async def search_issues(self, jql: str, max_results: int = 50) -> Dict[str, Any]:
-        """Search issues using JQL."""
-        url = f"{self.jira_url}/rest/api/3/search"
+    async def search_issues(self, jql: str, max_results: int = 50) -> List[Dict[str, Any]]:
+        """Search issues using JQL and return list of issues.
+
+        Jira /search/jql endpoint requires explicit fields parameter to include key.
+        """
+        url = f"{self.jira_url}/rest/api/3/search/jql"
         params = {
             "jql": jql,
             "maxResults": max_results,
+            "fields": "key,status,summary,description,issuetype,labels",
         }
         
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -51,7 +55,8 @@ class JiraClient:
                 headers=self._auth_header,
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            return data.get("issues", [])
     
     async def get_issue_by_status(self, status: str, project_key: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch issues by status."""
