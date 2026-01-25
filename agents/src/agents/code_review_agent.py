@@ -1,289 +1,233 @@
-import json
-from typing import Dict, Any, List, Tuple
-import httpx
-from src.clients.ai_management_client import AIManagementClient
-from src.clients.jira_client import JiraClient
+"""Code review agent: Hardened implementation for SDLC pipeline.
+
+Reviews code changes against architecture rules, coding standards, and edge cases.
+Provides three-level decisions: APPROVE, REQUEST_CHANGES, BLOCK.
+
+No code modification. No inter-agent calls.
+Structured, deterministic output.
+"""
+
+import subprocess
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional
+from enum import Enum
+
+
+class ReviewDecision(str, Enum):
+    """Code review decision levels."""
+    APPROVE = "APPROVE"
+    REQUEST_CHANGES = "REQUEST_CHANGES"
+    BLOCK = "BLOCK"
+
+
+@dataclass
+class ReviewIssue:
+    """Single code review issue."""
+    severity: str
+    category: str
+    message: str
+    line_number: Optional[int] = None
+    file_path: Optional[str] = None
+
+
+@dataclass
+class CodeReviewResult:
+    """Structured result from code review."""
+    success: bool
+    decision: ReviewDecision
+    issues: List[ReviewIssue] = field(default_factory=list)
+    architecture_violations: List[str] = field(default_factory=list)
+    standard_violations: List[str] = field(default_factory=list)
+    edge_cases: List[str] = field(default_factory=list)
+    reasoning: str = ""
+    approval_notes: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ArchitectureRules:
+    """Architecture rules for the project."""
+    
+    RULES = {
+        "no_print_statements": {
+            "pattern": r"print\(",
+            "message": "Direct print() calls not allowed; use logging",
+        },
+        "no_hardcoded_paths": {
+            "pattern": r'["\']/(app|root|home)/\w+',
+            "message": "Hardcoded file paths detected; use environment variables",
+        },
+    }
+
+
+class CodingStandards:
+    """Coding standards for the project."""
+    MAX_LINE_LENGTH = 100
 
 
 class CodeReviewAgent:
-    """Agent that reviews code via AI and transitions tasks based on review outcome."""
+    """Hardened code review agent for SDLC pipeline."""
     
-    def __init__(
-        self,
-        ai_management_url: str = None,
-        jira_url: str = None,
-        jira_username: str = None,
-        jira_token: str = None,
-    ):
-        import os
-        self.ai_client = AIManagementClient(ai_management_url or os.getenv("AI_MANAGEMENT_URL"))
-        self.jira_client = JiraClient(
-            jira_url or os.getenv("JIRA_URL"),
-            jira_username or os.getenv("JIRA_USERNAME"),
-            jira_token or os.getenv("JIRA_API_TOKEN"),
-        )
+    def __init__(self, repo_root: str = None):
+        """Initialize code review agent."""
+        self.repo_root = repo_root or os.getcwd()
     
-    async def review_pull_request(
-        self, issue_key: str, code_files: List[Tuple[str, str]]
-    ) -> Dict[str, Any]:
-        """
-        Review PR code and decide: approve (→ Testing) or reject (→ Development Waiting).
-        
-        Args:
-            issue_key: Jira issue key
-            code_files: List of (filename, code) tuples
-        
-        Returns:
-            {
-                "approved": bool,
-                "review_summary": str,
-                "issues": [list of issues found],
-                "checked_items": [list of what was checked],
-            }
-        """
-        print(f"\n📋 Code review started for {issue_key}")
-        
-        # If code files not provided, fetch from generated files
-        if not code_files:
-            import os
-            try:
-                code_impl_path = f"/app/agents/src/agents/{issue_key}_impl.py"
-                test_path = f"/app/tests/test_{issue_key}.py"
-                
-                code = ""
-                tests = ""
-                
-                if os.path.exists(code_impl_path):
-                    with open(code_impl_path, "r") as f:
-                        code = f.read()
-                
-                if os.path.exists(test_path):
-                    with open(test_path, "r") as f:
-                        tests = f.read()
-                
-                if code or tests:
-                    code_files = []
-                    if code:
-                        code_files.append((f"{issue_key}_impl.py", code))
-                    if tests:
-                        code_files.append((f"test_{issue_key}.py", tests))
-                    print(f"  📂 Loaded code files from disk")
-            except Exception as e:
-                print(f"  ⚠️ Error loading code files: {e}")
-        
-        # Build code context
-        code_context = "\n".join([
-            f"## File: {fname}\n```python\n{code}\n```"
-            for fname, code in code_files
-        ])
-        
-        # If still no code context, use generic review
-        if not code_context.strip():
-            print(f"  ⚠️ No code context found for {issue_key}; using generic review")
-            code_context = f"Code for issue {issue_key} (files not provided)"
-        
-        # AI code review analysis
-        review_result = await self._analyze_code(code_context)
-        
-        # Extract decision and details
-        approved = review_result.get("approved", False)
-        issues = review_result.get("issues", [])
-        checked_items = review_result.get("checked_items", [])
-        summary = review_result.get("summary", "")
-        
-        print(f"  ✅ Review complete: {'APPROVED' if approved else 'NEEDS FIXES'}")
-        print(f"  Issues found: {len(issues)}")
-        
-        # Transition in Jira based on result
-        if approved:
-            await self._transition_approved(issue_key, checked_items)
-        else:
-            await self._transition_rejected(issue_key, issues)
-        
-        return {
-            "approved": approved,
-            "review_summary": summary,
-            "issues": issues,
-            "checked_items": checked_items,
-        }
-    
-    async def _analyze_code(self, code_context: str) -> Dict[str, Any]:
-        """Use AI to analyze code and provide review decision."""
-        review_prompt = (
-            "You are an expert code reviewer. Analyze the following code and provide:\n"
-            "1. Whether it should be approved for testing (Yes/No)\n"
-            "2. Quality issues found (if any)\n"
-            "3. What you checked\n\n"
-            "CODE TO REVIEW:\n"
-            + code_context + "\n\n"
-            "REVIEW CHECKLIST:\n"
-            "- [ ] Code follows project patterns (async/await, FastAPI, type hints)\n"
-            "- [ ] Error handling is proper\n"
-            "- [ ] No hardcoded values or secrets\n"
-            "- [ ] Function/class documentation present\n"
-            "- [ ] No obvious security issues\n"
-            "- [ ] No duplicate code\n"
-            "- [ ] Tests appear comprehensive\n\n"
-            "RESPONSE FORMAT (JSON):\n"
-            "{\n"
-            '  "approved": true/false,\n'
-            '  "summary": "Brief reason for decision",\n'
-            '  "checked_items": ["item1", "item2", ...],\n'
-            '  "issues": ["issue1", "issue2", ...]\n'
-            "}\n"
-            "Output ONLY valid JSON."
-        )
-        
-        response = await self.ai_client.generate(
-            prompt=review_prompt,
-            provider="openai",
-            max_tokens=1500,
-            temperature=0.5,  # Lower temp for more consistent review
-        )
-        
-        text = response.get("text", "{}")
-        
-        # Try to extract JSON
+    def execute(self, context: Dict[str, Any]) -> CodeReviewResult:
+        """Execute code review."""
         try:
-            # Find JSON in response
-            if "```json" in text:
-                json_start = text.find("```json") + 7
-                json_end = text.find("```", json_start)
-                json_str = text[json_start:json_end].strip()
-            elif "{" in text:
-                json_start = text.find("{")
-                json_end = text.rfind("}") + 1
-                json_str = text[json_start:json_end]
-            else:
-                json_str = text
+            code_changes = context.get("code_changes", {})
             
-            result = json.loads(json_str)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            result = {
-                "approved": "no issues" in text.lower() or "approved" in text.lower(),
-                "summary": text[:500],
-                "checked_items": ["Code analysis attempted"],
-                "issues": [] if "approved" in text.lower() else ["Parse error in review"],
-            }
-        
-        return result
-    
-    async def _transition_approved(self, issue_key: str, checked_items: List[str]) -> None:
-        """Transition task to Testing status and add approval comment."""
-        comment = (
-            "✅ **CODE REVIEW PASSED**\n\n"
-            "Code review approved by AI agent. Ready for testing.\n\n"
-            "**Checked items:**\n"
-        )
-        for item in checked_items:
-            comment += f"- {item}\n"
-        
-        comment += (
-            "\n**Next step:** Automated testing will run and results will be posted here."
-        )
-        
-        await self.jira_client.add_comment(issue_key, comment)
-        
-        # Transition to Testing
-        try:
-            transitions = await self.jira_client.get_transitions(issue_key)
-            target = None
-            for name in ["Testing", "Test Ready", "In Testing"]:
-                for t in transitions:
-                    if t.get("name") == name:
-                        target = t
-                        break
-                if target:
-                    break
-            if target:
-                await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
-                print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
-            else:
-                print(f"  ⚠️ No Testing status found; skipping transition")
+            if not code_changes:
+                return CodeReviewResult(
+                    success=False,
+                    decision=ReviewDecision.BLOCK,
+                    error="No code changes to review",
+                )
+            
+            issues = []
+            architecture_violations = []
+            standard_violations = []
+            edge_cases = []
+            
+            for file_path, content in code_changes.items():
+                file_issues = self._review_file(file_path, content)
+                
+                for issue in file_issues:
+                    issues.append(issue)
+                    
+                    if issue.category == "architecture":
+                        architecture_violations.append(issue.message)
+                    elif issue.category == "standards":
+                        standard_violations.append(issue.message)
+                    elif issue.category == "edge_case":
+                        edge_cases.append(issue.message)
+            
+            decision = self._make_decision(architecture_violations, standard_violations)
+            reasoning = self._generate_reasoning(
+                decision, architecture_violations, standard_violations, edge_cases
+            )
+            approval_notes = "Code review passed. Ready for testing." if decision == ReviewDecision.APPROVE else None
+            
+            return CodeReviewResult(
+                success=True,
+                decision=decision,
+                issues=issues,
+                architecture_violations=architecture_violations,
+                standard_violations=standard_violations,
+                edge_cases=edge_cases,
+                reasoning=reasoning,
+                approval_notes=approval_notes,
+            )
+            
         except Exception as e:
-            print(f"  ⚠️ Transition error: {e}")
-
+            return CodeReviewResult(
+                success=False,
+                decision=ReviewDecision.BLOCK,
+                error=str(e),
+            )
     
-    async def _transition_rejected(self, issue_key: str, issues: List[str]) -> None:
-        """Transition task back to Development Waiting and explain issues."""
-        comment = (
-            "❌ **CODE REVIEW NEEDS FIXES**\n\n"
-            "The following issues were found during automated code review:\n\n"
-        )
-        for i, issue in enumerate(issues, 1):
-            comment += f"{i}. {issue}\n"
-        
-        comment += (
-            "\n**Action required:**\n"
-            "- Fix the issues listed above\n"
-            "- Commit and push fixes to the same branch\n"
-            "- Re-submit for code review\n"
-        )
-        
-        await self.jira_client.add_comment(issue_key, comment)
-        
-        # Transition back to Development Waiting
-        try:
-            transitions = await self.jira_client.get_transitions(issue_key)
-            target = None
-            for name in ["Waiting Development", "Development Waiting", "Todo"]:
-                for t in transitions:
-                    if t.get("name") == name:
-                        target = t
-                        break
-                if target:
-                    break
-            if target:
-                await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
-                print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
-            else:
-                print(f"  ⚠️ No Development status found; skipping transition")
-        except Exception as e:
-            print(f"  ⚠️ Transition error: {e}")
-
-
-class CodeQualityChecker:
-    """Helper to extract and check code quality metrics."""
-    
-    @staticmethod
-    def check_code_patterns(code: str) -> Dict[str, bool]:
-        """Check if code follows project patterns."""
-        checks = {
-            "has_type_hints": ":" in code and "->" in code,
-            "uses_async": "async def" in code or "await" in code,
-            "has_docstrings": '"""' in code or "'''" in code,
-            "has_error_handling": "try:" in code or "except" in code,
-            "imports_organized": code.startswith("import") or code.startswith("from"),
-        }
-        return checks
-    
-    @staticmethod
-    def check_security(code: str) -> List[str]:
-        """Check for common security issues."""
+    def _review_file(self, file_path: str, content: str) -> List[ReviewIssue]:
+        """Review a single file."""
         issues = []
         
-        if "password" in code.lower() and "=" in code:
-            issues.append("Potential hardcoded password/secret detected")
+        if not file_path.endswith(".py"):
+            return issues
         
-        if "eval(" in code:
-            issues.append("Use of eval() is dangerous")
+        lines = content.split("\n")
         
-        if "exec(" in code:
-            issues.append("Use of exec() is dangerous")
+        for rule_name, rule in ArchitectureRules.RULES.items():
+            for i, line in enumerate(lines, 1):
+                if re.search(rule.get("pattern", ""), line):
+                    issues.append(ReviewIssue(
+                        severity="error",
+                        category="architecture",
+                        message=rule["message"],
+                        line_number=i,
+                        file_path=file_path,
+                    ))
         
-        if "__import__" in code:
-            issues.append("Dynamic imports without validation")
+        issues.extend(self._check_standards(file_path, lines))
+        issues.extend(self._check_edge_cases(file_path, content))
         
         return issues
     
-    @staticmethod
-    def check_tests(code: str) -> Dict[str, bool]:
-        """Check if test code is present and structured."""
-        checks = {
-            "uses_pytest": "pytest" in code or "def test_" in code,
-            "has_fixtures": "@pytest.fixture" in code or "@fixture" in code,
-            "has_assertions": "assert" in code,
-            "has_mocks": "Mock" in code or "patch" in code or "monkeypatch" in code,
-        }
-        return checks
+    def _check_standards(self, file_path: str, lines: List[str]) -> List[ReviewIssue]:
+        """Check coding standards."""
+        issues = []
+        
+        for i, line in enumerate(lines, 1):
+            if len(line) > CodingStandards.MAX_LINE_LENGTH:
+                issues.append(ReviewIssue(
+                    severity="warning",
+                    category="standards",
+                    message=f"Line too long ({len(line)} > {CodingStandards.MAX_LINE_LENGTH})",
+                    line_number=i,
+                    file_path=file_path,
+                ))
+            
+            if re.search(r"except\s*:", line):
+                issues.append(ReviewIssue(
+                    severity="error",
+                    category="standards",
+                    message="Bare 'except:' not allowed; specify exception type",
+                    line_number=i,
+                    file_path=file_path,
+                ))
+            
+            if re.search(r"from\s+\w+\s+import\s+\*", line):
+                issues.append(ReviewIssue(
+                    severity="error",
+                    category="standards",
+                    message="Wildcard imports not allowed",
+                    line_number=i,
+                    file_path=file_path,
+                ))
+        
+        return issues
+    
+    def _check_edge_cases(self, file_path: str, content: str) -> List[ReviewIssue]:
+        """Check for edge cases."""
+        issues = []
+        
+        if re.search(r"\[\d+\]|\[0\]|\[-1\]", content):
+            issues.append(ReviewIssue(
+                severity="warning",
+                category="edge_case",
+                message="Direct array/list indexing detected; verify bounds",
+                file_path=file_path,
+            ))
+        
+        return issues
+    
+    def _make_decision(
+        self,
+        arch_violations: List[str],
+        standard_violations: List[str],
+    ) -> ReviewDecision:
+        """Determine review decision."""
+        if arch_violations:
+            return ReviewDecision.BLOCK
+        if standard_violations:
+            return ReviewDecision.REQUEST_CHANGES
+        return ReviewDecision.APPROVE
+    
+    def _generate_reasoning(
+        self,
+        decision: ReviewDecision,
+        arch_violations: List[str],
+        standard_violations: List[str],
+        edge_cases: List[str],
+    ) -> str:
+        """Generate reasoning."""
+        if decision == ReviewDecision.BLOCK:
+            reasons = arch_violations[:3]
+            return f"BLOCK: Code violates architecture rules. Issues: {'; '.join(reasons)}"
+        elif decision == ReviewDecision.REQUEST_CHANGES:
+            reasons = standard_violations[:3]
+            return f"REQUEST_CHANGES: Code has standards violations. Issues: {'; '.join(reasons)}"
+        else:
+            if edge_cases:
+                return f"APPROVE: Code meets requirements. Note: {len(edge_cases)} edge case(s) to verify."
+            return "APPROVE: Code review passed. Ready for testing."
+
