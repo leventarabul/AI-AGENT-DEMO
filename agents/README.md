@@ -147,6 +147,28 @@ DEMO_DOMAIN_PASSWORD=your_password
 LOG_LEVEL=INFO
 ```
 
+## Knowledge Management
+
+Static knowledge lives in `agents/docs/`:
+- `SYSTEM_CONTEXT.md`: overall system context
+- `API_CONTRACTS.md`: endpoints and payloads
+- `CODE_PATTERNS.md`: common coding patterns
+- `ARCHITECTURE.md`: env vars, networking, caching
+- `DECISIONS.md`: key architecture decisions (ADRs)
+
+Use `agents/src/knowledge/context_loader.py` to build rich prompts for tasks (e.g., Jira):
+
+```python
+from knowledge.context_loader import build_ai_prompt
+
+prompt = build_ai_prompt(
+    task_title="Implement reward calculation", 
+    task_description="Separate transaction and reward amounts",
+    labels=["backend", "fastapi"],
+)
+# pass `prompt` to ai-management /generate
+```
+
 ## Running as Workers
 
 ### Event Registration Worker
