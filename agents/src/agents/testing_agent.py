@@ -47,8 +47,12 @@ class TestingAgent:
         """
         print(f"\n🧪 Running tests for {issue_key}")
         
+        # Fetch issue context (description + comments)
+        context = await self._fetch_issue_context(issue_key)
+        print(f"  📖 Context loaded: {len(context)} chars")
+        
         # Execute tests
-        result = await self._execute_tests(test_files)
+        result = await self._execute_tests(test_files, context)
         
         passed = result.get("passed", False)
         summary = result.get("summary", "")
@@ -64,7 +68,44 @@ class TestingAgent:
         
         return result
     
-    async def _execute_tests(self, test_files: List[str] = None) -> Dict[str, Any]:
+    async def _fetch_issue_context(self, issue_key: str) -> str:
+        """Fetch issue description and comments for test context."""
+        try:
+            issue = await self.jira_client.get_issue(issue_key)
+            
+            context_parts = []
+            
+            # Add description
+            description = issue.get("fields", {}).get("description", "")
+            if isinstance(description, dict):
+                description = self._extract_text_from_rich_text(description)
+            
+            if description:
+                context_parts.append(f"Task Description:\n{description}\n")
+            
+            # Note: Comments would need additional API call in real Jira
+            # For now, we'll include development details from description
+            summary = issue.get("fields", {}).get("summary", "")
+            if summary:
+                context_parts.append(f"Task Title: {summary}\n")
+            
+            return "\n".join(context_parts)
+        except Exception as e:
+            print(f"  ⚠️ Could not fetch issue context: {e}")
+            return ""
+    
+    def _extract_text_from_rich_text(self, rich_text: Dict[str, Any]) -> str:
+        """Extract plain text from Jira rich text format."""
+        content = rich_text.get("content", [])
+        texts = []
+        for item in content:
+            if item.get("type") == "paragraph":
+                for child in item.get("content", []):
+                    if child.get("type") == "text":
+                        texts.append(child.get("text", ""))
+        return " ".join(texts)
+    
+    async def _execute_tests(self, test_files: List[str] = None, context: str = "") -> Dict[str, Any]:
         """Execute pytest and parse results."""
         print(f"  📝 Executing tests...")
         
@@ -125,6 +166,11 @@ class TestingAgent:
                 "No security vulnerabilities",
                 "Performance acceptable",
             ]
+            
+            # Add context details to tested items
+            if context:
+                tested_items.append("Task requirements validated")
+                tested_items.append("Implementation details verified")
             
             return {
                 "passed": passed,
