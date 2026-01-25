@@ -219,6 +219,70 @@ After webhook is received:
 - PR is created
 - Task status updates to "In Review"
 
+## Code Review Agent (Automated Quality Control)
+
+CodeReviewAgent automatically reviews code and decides: approve → Testing, or reject → Development Waiting.
+
+### Workflow
+
+1. Receives webhook when PR status → "In Review"
+2. Analyzes code for:
+   - **Code Quality**: Type hints, docstrings, patterns
+   - **Security**: No hardcoded secrets, dangerous functions
+   - **Testing**: Comprehensive tests, mocks, fixtures
+   - **Patterns**: Async/await, error handling, no duplication
+3. **If Approved** → Posts success comment, task transitions to "Testing"
+4. **If Rejected** → Posts detailed issue list, task goes back to "Development Waiting"
+
+### Endpoints
+
+- **POST /webhooks/code-review** - Receive code review events
+  - Filters: `status = "In Review"` or `"Code Ready"`
+  - Returns: AI review decision with issues/approved items
+
+### Example
+
+```bash
+# Send mock code review webhook
+python examples/test_code_review_webhook.py
+
+# Monitor review in logs
+docker logs agents-service -f
+```
+
+**Review Results:**
+
+✅ **Approved** → Comment with checklist items:
+```
+✅ CODE REVIEW PASSED
+
+Code review approved by AI agent. Ready for testing.
+
+Checked items:
+- Code follows project patterns
+- Error handling is proper
+- No hardcoded secrets
+- Functions are documented
+- Tests are comprehensive
+
+Next step: Automated testing will run...
+```
+
+❌ **Rejected** → Comment with issues to fix:
+```
+❌ CODE REVIEW NEEDS FIXES
+
+The following issues were found:
+1. Missing error handling in async function
+2. Hardcoded database URL detected
+3. Test coverage insufficient
+
+Action required:
+- Fix the issues listed above
+- Commit and push fixes
+- Re-submit for code review
+```
+
 ## Running as Workers
 
 ### Event Registration Worker

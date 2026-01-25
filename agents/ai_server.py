@@ -1,10 +1,11 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 import asyncio
 import os
 from src.agents.event_agent import EventAgent
 from src.agents.jira_agent import JiraAgent
+from src.agents.code_review_agent import CodeReviewAgent
 
 app = FastAPI()
 
@@ -94,3 +95,63 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
             "message": "Only 'Development Waiting' status is processed"
         }
 
+
+async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str, str]]):
+    """Background task to review code with AI agent."""
+    try:
+        agent = CodeReviewAgent(
+            ai_management_url=os.getenv("AI_MANAGEMENT_URL"),
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+        )
+        result = await agent.review_pull_request(issue_key, code_files)
+        print(f"✅ Code review for {issue_key} completed:\n{result}")
+    except Exception as e:
+        print(f"❌ Error reviewing code for {issue_key}: {e}")
+
+
+class CodeReviewWebhookRequest(BaseModel):
+    """Code review webhook payload."""
+    webhookEvent: str
+    issue: Dict[str, Any]
+    pull_request: Optional[Dict[str, Any]] = None
+    code_files: List[Tuple[str, str]] = []  # [(filename, code), ...]
+
+
+@app.post("/webhooks/code-review")
+async def code_review_webhook(
+    request: CodeReviewWebhookRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Receive code review webhook events.
+    Filters for 'In Review' status, analyzes code, transitions to Testing or back to Development.
+    """
+    print(f"🔍 Code review webhook received: {request.webhookEvent}")
+    
+    issue = request.issue
+    issue_key = issue.get("key", "")
+    status = issue.get("fields", {}).get("status", {}).get("name", "")
+    
+    # Only process if in "In Review" status (PR ready for review)
+    if status == "In Review" or status == "Code Ready":
+        print(f"  Reviewing: {issue_key}")
+        
+        # If code_files not provided, extract from PR
+        code_files = request.code_files or []
+        
+        # Dispatch to background task
+        background_tasks.add_task(_review_code_in_background, issue_key, code_files)
+        return {
+            "status": "accepted",
+            "issue_key": issue_key,
+            "message": "Code review dispatched"
+        }
+    else:
+        return {
+            "status": "skipped",
+            "issue_key": issue_key,
+            "status_current": status,
+            "message": "Only 'In Review' or 'Code Ready' status is processed"
+        }
