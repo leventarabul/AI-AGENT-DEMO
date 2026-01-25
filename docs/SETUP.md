@@ -97,7 +97,7 @@ DB_PORT=5432
 # ==========================================
 # API AUTHENTICATION
 # ==========================================
-API_USERNAME=admin
+API_USERNAME=your_username
 API_PASSWORD=your_password
 
 # ==========================================

@@ -24,9 +24,9 @@ System uses HTTP Basic Authentication for API access. Credentials are managed vi
 **Credentials Location:**
 - **Primary:** `.env` file
   ```env
-  API_USERNAME=admin
-  API_PASSWORD=admin123
-  DB_PASSWORD=admin123
+  API_USERNAME=your_username
+  API_PASSWORD=your_password
+  DB_PASSWORD=your_password
   ```
 
 **Code Location:**
@@ -155,8 +155,8 @@ DB_PORT=5432                  # PostgreSQL port
 # ==========================================
 # API AUTHENTICATION
 # ==========================================
-API_USERNAME=admin            # Demo Domain API username
-API_PASSWORD=admin123         # Demo Domain API password
+API_USERNAME=your_username            # Demo Domain API username
+API_PASSWORD=your_password         # Demo Domain API password
 
 # ==========================================
 # AI SERVICE KEYS (Optional)

@@ -164,7 +164,7 @@ docker compose down
 ```
 # Database
 DB_PASSWORD=your_password
-API_USERNAME=admin
+API_USERNAME=your_username
 API_PASSWORD=your_password
 
 # OpenAI (optional)
