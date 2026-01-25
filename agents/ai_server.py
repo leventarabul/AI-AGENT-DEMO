@@ -1,14 +1,35 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
+from fastapi.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List, Tuple
 import asyncio
 import os
+import logging
+from contextlib import asynccontextmanager
 from src.agents.event_agent import EventAgent
 from src.agents.jira_agent import JiraAgent
 from src.agents.code_review_agent import CodeReviewAgent
 from src.agents.testing_agent import TestingAgent
+from src.middleware.webhook_middleware import verify_jira_webhook_signature
+from src.scheduler import get_scheduler
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
+# Startup/shutdown events for scheduler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage scheduler lifecycle."""
+    # Startup
+    scheduler = get_scheduler()
+    scheduler.start()
+    yield
+    # Shutdown
+    scheduler.stop()
+
+app = FastAPI(lifespan=lifespan)
+
+# Add webhook signature verification middleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=verify_jira_webhook_signature)
 
 class AIEventRequest(BaseModel):
     event_code: str
@@ -212,3 +233,250 @@ async def testing_webhook(
             "status_current": status,
             "message": "Only 'Testing' or 'Test Ready' status is processed"
         }
+
+
+# ============================================================================
+# API ENDPOINTS FOR MANUAL TRIGGERING (No webhooks required)
+# ============================================================================
+
+@app.post("/api/agents/process-development")
+async def api_process_development(background_tasks: BackgroundTasks):
+    """
+    Manually trigger processing of all 'Development Waiting' tasks.
+    
+    Usage:
+        POST http://localhost:8000/api/agents/process-development
+    
+    Returns:
+        - status: "started" or "no_tasks"
+        - count: number of tasks found
+    """
+    try:
+        from src.clients.jira_client import JiraClient
+        
+        jira_client = JiraClient(
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+        )
+        
+        # Find all Development Waiting tasks
+        jql = 'status = "Development Waiting" AND assignee is EMPTY'
+        issues = await jira_client.search_issues(jql)
+        
+        if not issues:
+            return {
+                "status": "no_tasks",
+                "count": 0,
+                "message": "No 'Development Waiting' tasks found"
+            }
+        
+        # Dispatch each issue to background processing
+        for issue in issues:
+            issue_key = issue.get('key')
+            background_tasks.add_task(_process_jira_task_in_background, issue_key)
+        
+        return {
+            "status": "started",
+            "count": len(issues),
+            "message": f"Started processing {len(issues)} task(s)",
+            "issues": [issue.get('key') for issue in issues]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in api_process_development: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/process-reviews")
+async def api_process_reviews(background_tasks: BackgroundTasks):
+    """
+    Manually trigger code review for all 'In Review' tasks.
+    
+    Usage:
+        POST http://localhost:8000/api/agents/process-reviews
+    
+    Returns:
+        - status: "started" or "no_tasks"
+        - count: number of tasks found
+    """
+    try:
+        from src.clients.jira_client import JiraClient
+        
+        jira_client = JiraClient(
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+        )
+        
+        # Find all In Review tasks
+        jql = 'status = "In Review"'
+        issues = await jira_client.search_issues(jql)
+        
+        if not issues:
+            return {
+                "status": "no_tasks",
+                "count": 0,
+                "message": "No 'In Review' tasks found"
+            }
+        
+        # Dispatch each issue to background processing
+        for issue in issues:
+            issue_key = issue.get('key')
+            background_tasks.add_task(_review_code_in_background, issue_key, [])
+        
+        return {
+            "status": "started",
+            "count": len(issues),
+            "message": f"Started reviewing {len(issues)} task(s)",
+            "issues": [issue.get('key') for issue in issues]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in api_process_reviews: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/process-testing")
+async def api_process_testing(background_tasks: BackgroundTasks):
+    """
+    Manually trigger testing for all 'Testing' tasks.
+    
+    Usage:
+        POST http://localhost:8000/api/agents/process-testing
+    
+    Returns:
+        - status: "started" or "no_tasks"
+        - count: number of tasks found
+    """
+    try:
+        from src.clients.jira_client import JiraClient
+        
+        jira_client = JiraClient(
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+        )
+        
+        # Find all Testing tasks
+        jql = 'status = "Testing"'
+        issues = await jira_client.search_issues(jql)
+        
+        if not issues:
+            return {
+                "status": "no_tasks",
+                "count": 0,
+                "message": "No 'Testing' tasks found"
+            }
+        
+        # Dispatch each issue to background processing
+        for issue in issues:
+            issue_key = issue.get('key')
+            background_tasks.add_task(_run_tests_in_background, issue_key, None)
+        
+        return {
+            "status": "started",
+            "count": len(issues),
+            "message": f"Started testing {len(issues)} task(s)",
+            "issues": [issue.get('key') for issue in issues]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in api_process_testing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/process-all")
+async def api_process_all(background_tasks: BackgroundTasks):
+    """
+    Manually trigger all agents in sequence (Development → Review → Testing).
+    
+    Usage:
+        POST http://localhost:8000/api/agents/process-all
+    
+    Returns:
+        - status: "started"
+        - tasks: breakdown by stage
+    """
+    try:
+        from src.clients.jira_client import JiraClient
+        
+        jira_client = JiraClient(
+            jira_url=os.getenv("JIRA_URL"),
+            jira_username=os.getenv("JIRA_USERNAME"),
+            jira_token=os.getenv("JIRA_API_TOKEN"),
+        )
+        
+        results = {
+            "development_waiting": [],
+            "in_review": [],
+            "testing": []
+        }
+        
+        # Process Development Waiting
+        dev_jql = 'status = "Development Waiting" AND assignee is EMPTY'
+        dev_issues = await jira_client.search_issues(dev_jql)
+        for issue in dev_issues:
+            issue_key = issue.get('key')
+            results["development_waiting"].append(issue_key)
+            background_tasks.add_task(_process_jira_task_in_background, issue_key)
+        
+        # Process In Review
+        review_jql = 'status = "In Review"'
+        review_issues = await jira_client.search_issues(review_jql)
+        for issue in review_issues:
+            issue_key = issue.get('key')
+            results["in_review"].append(issue_key)
+            background_tasks.add_task(_review_code_in_background, issue_key, [])
+        
+        # Process Testing
+        test_jql = 'status = "Testing"'
+        test_issues = await jira_client.search_issues(test_jql)
+        for issue in test_issues:
+            issue_key = issue.get('key')
+            results["testing"].append(issue_key)
+            background_tasks.add_task(_run_tests_in_background, issue_key, None)
+        
+        total = len(dev_issues) + len(review_issues) + len(test_issues)
+        
+        return {
+            "status": "started",
+            "total_tasks": total,
+            "tasks": results,
+            "message": f"Started processing {total} task(s) across all stages"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in api_process_all: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agents/status")
+async def api_status():
+    """
+    Get the current status of the scheduler.
+    
+    Usage:
+        GET http://localhost:8000/api/agents/status
+    
+    Returns:
+        - scheduler_running: true/false
+        - jobs: list of scheduled jobs
+    """
+    scheduler = get_scheduler()
+    jobs = []
+    
+    if scheduler.scheduler.running:
+        for job in scheduler.scheduler.get_jobs():
+            jobs.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run": str(job.next_run_time),
+                "trigger": str(job.trigger)
+            })
+    
+    return {
+        "scheduler_running": scheduler.scheduler.running,
+        "total_jobs": len(jobs),
+        "jobs": jobs
+    }

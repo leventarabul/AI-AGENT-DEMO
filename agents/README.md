@@ -185,10 +185,24 @@ JiraAgent automates task development from Jira:
 JIRA_URL=https://your-jira.atlassian.net
 JIRA_USERNAME=your-email@example.com
 JIRA_API_TOKEN=your-jira-api-token
+JIRA_WEBHOOK_SECRET=your-webhook-secret
 GIT_REPO_PATH=/path/to/repo
 AI_MANAGEMENT_URL=http://ai-management-service:8001
 OPENAI_API_KEY=sk-proj-...
 ```
+
+### Webhook Security
+
+All webhooks are secured with HMAC-SHA256 signature verification:
+
+1. Jira generates signature: `X-Atlassian-Webhook-Signature: sha256=<hex>`
+2. Agent verifies signature using `JIRA_WEBHOOK_SECRET`
+3. Invalid signatures return 401 Unauthorized
+
+**Configure in Jira:**
+- **Webhook URL**: `https://your-agent-server/webhooks/jira`
+- **Secret**: Same value as `JIRA_WEBHOOK_SECRET`
+- **Events**: Issue updated, PR opened, etc.
 
 ### Endpoints
 
@@ -460,6 +474,131 @@ campaign = asyncio.run(CampaignAgent().create_campaign(
 ))
 print(campaign)
 "
+```
+
+## Scheduled Job Processing
+
+The agents service includes an **automatic scheduler** that runs every 5 minutes to process tasks in different stages.
+
+### How It Works
+
+The scheduler automatically:
+
+1. **Every 5 minutes:**
+   - Finds all "Development Waiting" tasks → runs JiraAgent
+   - Finds all "In Review" tasks → runs CodeReviewAgent
+   - Finds all "Testing" tasks → runs TestingAgent
+
+2. **No Jira Webhook Required** - Jobs run automatically on schedule
+
+3. **Background Processing** - Long-running tasks don't block the API
+
+### Scheduler Status
+
+```bash
+# Check scheduler status and jobs
+curl http://localhost:8002/api/agents/status
+```
+
+Response:
+```json
+{
+  "scheduler_running": true,
+  "total_jobs": 3,
+  "jobs": [
+    {
+      "id": "process_development_waiting",
+      "name": "Process Development Waiting tasks",
+      "next_run": "2026-01-25 10:30:00",
+      "trigger": "interval[0:05:00]"
+    },
+    {
+      "id": "process_in_review",
+      "name": "Process In Review tasks",
+      "next_run": "2026-01-25 10:31:00",
+      "trigger": "interval[0:05:00]"
+    },
+    {
+      "id": "process_testing",
+      "name": "Process Testing tasks",
+      "next_run": "2026-01-25 10:32:00",
+      "trigger": "interval[0:05:00]"
+    }
+  ]
+}
+```
+
+### Manual Triggering (API)
+
+You can also manually trigger agents **without webhooks**:
+
+#### 1. Process Development Waiting Tasks
+
+```bash
+curl -X POST http://localhost:8002/api/agents/process-development
+
+# Response:
+{
+  "status": "started",
+  "count": 2,
+  "message": "Started processing 2 task(s)",
+  "issues": ["PROJ-123", "PROJ-124"]
+}
+```
+
+#### 2. Process In Review Tasks
+
+```bash
+curl -X POST http://localhost:8002/api/agents/process-reviews
+
+# Response:
+{
+  "status": "started",
+  "count": 1,
+  "message": "Started reviewing 1 task(s)",
+  "issues": ["PROJ-125"]
+}
+```
+
+#### 3. Process Testing Tasks
+
+```bash
+curl -X POST http://localhost:8002/api/agents/process-testing
+
+# Response:
+{
+  "status": "started",
+  "count": 1,
+  "message": "Started testing 1 task(s)",
+  "issues": ["PROJ-126"]
+}
+```
+
+#### 4. Process All Stages
+
+```bash
+curl -X POST http://localhost:8002/api/agents/process-all
+
+# Response:
+{
+  "status": "started",
+  "total_tasks": 4,
+  "tasks": {
+    "development_waiting": ["PROJ-123", "PROJ-124"],
+    "in_review": ["PROJ-125"],
+    "testing": ["PROJ-126"]
+  },
+  "message": "Started processing 4 task(s) across all stages"
+}
+```
+
+### Configuration
+
+Scheduler runs automatically when the service starts. To disable, set environment variable:
+
+```env
+# Don't set this unless you want to disable scheduling
+# DISABLE_SCHEDULER=true
 ```
 
 ## Error Handling
