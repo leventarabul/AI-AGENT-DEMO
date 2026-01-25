@@ -1,5 +1,6 @@
 import os
 import uvicorn
+import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -7,6 +8,12 @@ from typing import Optional, Dict, Any, List
 from manager import LLMClientManager
 from cache_manager import CacheManager
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Management Service", version="1.0.0")
 llm_manager = LLMClientManager()
@@ -71,16 +78,30 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
     """Generate text using specified LLM provider."""
     
     try:
-        # Check cache first
+        logger.info("\n" + "="*80)
+        logger.info("📨 INCOMING REQUEST TO /generate")
+        logger.info(f"Provider: {request.provider}")
+        logger.info(f"Model: {request.model}")
+        logger.info(f"Use Cache: {request.use_cache}")
+        logger.info(f"Prompt Length: {len(request.prompt)} chars")
+        logger.info("="*80)
+        
+        # Check cache first (skip if error)
         cached_response = None
         if request.use_cache:
-            cached_response = await cache_manager.get(
-                request.prompt,
-                request.provider,
-                request.model or llm_manager.get_client(request.provider).model
-            )
-            if cached_response:
-                return GenerateResponse(**cached_response, cached=True)
+            try:
+                cached_response = await cache_manager.get(
+                    request.prompt,
+                    request.provider,
+                    request.model or llm_manager.get_client(request.provider).model
+                )
+                if cached_response:
+                    logger.info("💾 CACHE HIT - Returning cached response")
+                    return GenerateResponse(**cached_response, cached=True)
+                else:
+                    logger.info("🔍 CACHE MISS - Will call LLM API")
+            except Exception as cache_err:
+                logger.warning(f"Cache check failed: {cache_err}, continuing without cache")
         
         # Generate response
         response = await llm_manager.generate(
@@ -90,17 +111,30 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
             temperature=request.temperature
         )
         
-        # Cache the response
+        # Cache the response (skip if error)
         if request.use_cache:
-            await cache_manager.set(
-                request.prompt,
-                request.provider,
-                response["model"],
-                response
-            )
+            try:
+                await cache_manager.set(
+                    request.prompt,
+                    request.provider,
+                    response["model"],
+                    response
+                )
+                logger.info("💾 Response cached successfully")
+            except Exception as cache_err:
+                logger.warning(f"Cache set failed: {cache_err}, response still returned")
         
         response["cached"] = False
+        logger.info("✅ Request completed successfully")
         return GenerateResponse(**response)
+    
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Generate error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
     
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

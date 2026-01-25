@@ -24,7 +24,8 @@ class EventAgent:
         self.demo_domain_url = demo_domain_url or os.getenv("DEMO_DOMAIN_URL", "http://localhost:8000")
         self.demo_domain_user = demo_domain_user or os.getenv("DEMO_DOMAIN_USERNAME", "admin")
         self.demo_domain_pass = demo_domain_pass or os.getenv("DEMO_DOMAIN_PASSWORD", "admin123")
-        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", "http://localhost:8001")
+        # Use service name for Docker networking
+        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", "http://ai-management-service:8001")
     
     def _get_demo_domain_client(self):
         """Get demo domain client instance"""
@@ -85,16 +86,36 @@ class EventAgent:
         
         async with AIManagementClient(self.ai_management_url) as ai_client:
             try:
-                response = await ai_client.suggest_amount(
+                print(f"\n🤖 Requesting AI suggestion for customer {customer_id}", flush=True)
+                print(f"Base Amount: {base_amount}", flush=True)
+                response = await ai_client.generate(
                     prompt=prompt_template,
-                    customer_id=customer_id,
-                    merchant_id=merchant_id,
-                    event_code=event_code,
-                    base_amount=base_amount
+                    provider="openai",
+                    max_tokens=100,
+                    temperature=0.7,
+                    use_cache=True
                 )
-                return response.get("amount", base_amount)
+                
+                # Parse numeric value from AI response
+                ai_text = response.get("text", str(base_amount)).strip()
+                print(f"🤖 AI Raw Response: {ai_text}", flush=True)
+                
+                # Try to extract number from response
+                import re
+                numbers = re.findall(r'\d+\.?\d*', ai_text)
+                if numbers:
+                    suggested_amount = float(numbers[0])
+                    print(f"✅ AI Suggested Reward: {suggested_amount}\n", flush=True)
+                    logger.info(f"✅ AI Suggested Reward: {suggested_amount}")
+                    return suggested_amount
+                else:
+                    print(f"⚠️ Could not parse AI response, using base amount: {base_amount}\n", flush=True)
+                    logger.warning(f"⚠️ Could not parse AI response, using base amount: {base_amount}")
+                    return base_amount
+                    
             except Exception as e:
-                logger.error(f"AI suggestion failed: {e}, using base amount")
+                print(f"❌ AI suggestion failed: {e}, using base amount\n", flush=True)
+                logger.error(f"❌ AI suggestion failed: {e}, using base amount")
                 return base_amount
     
     async def register_event_with_ai_reward(
