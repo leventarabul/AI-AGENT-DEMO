@@ -148,3 +148,46 @@ class DemoDomainClient:
         except Exception as e:
             logger.error(f"Failed to create campaign rule: {e}")
             raise
+    
+    async def get_customer_events(self, customer_id: str, limit: int = 5) -> list:
+        """Get recent events for a customer (for knowledgebase prompts)"""
+        try:
+            params = {"customer_id": customer_id, "limit": limit}
+            response = await self.client.get(f"{self.base_url}/events", params=params)
+            response.raise_for_status()
+            return response.json() if response.content else []
+        except Exception as e:
+            logger.error(f"Failed to get events for customer {customer_id}: {e}")
+            return []
+    
+    async def create_earning(
+        self,
+        event_id: int,
+        campaign_id: int,
+        rule_id: int,
+        customer_id: str,
+        amount: float,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Create an earning record (AI-suggested reward)"""
+        
+        payload = {
+            "event_id": event_id,
+            "campaign_id": campaign_id,
+            "rule_id": rule_id,
+            "customer_id": customer_id,
+            "amount": amount,
+            "status": "pending",
+            "metadata": metadata or {}
+        }
+        
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/earnings",
+                json=payload
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to create earning: {e}")
+            raise

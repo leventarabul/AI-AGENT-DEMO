@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+import os
 
 from src.clients.demo_domain_client import DemoDomainClient
 from src.clients.ai_management_client import AIManagementClient
@@ -15,15 +16,24 @@ class EventAgent:
     
     def __init__(
         self,
-        demo_domain_url: str = "http://localhost:8000",
-        demo_domain_user: str = "admin",
-        demo_domain_pass: str = "admin123",
-        ai_management_url: str = "http://localhost:8001"
+        demo_domain_url: str = None,
+        demo_domain_user: str = None,
+        demo_domain_pass: str = None,
+        ai_management_url: str = None
     ):
-        self.demo_domain_url = demo_domain_url
-        self.demo_domain_user = demo_domain_user
-        self.demo_domain_pass = demo_domain_pass
-        self.ai_management_url = ai_management_url
+        self.demo_domain_url = demo_domain_url or os.getenv("DEMO_DOMAIN_URL", "http://localhost:8000")
+        self.demo_domain_user = demo_domain_user or os.getenv("DEMO_DOMAIN_USERNAME", "admin")
+        self.demo_domain_pass = demo_domain_pass or os.getenv("DEMO_DOMAIN_PASSWORD", "admin123")
+        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", "http://localhost:8001")
+    
+    def _get_demo_domain_client(self):
+        """Get demo domain client instance"""
+        from src.clients.demo_domain_client import DemoDomainClient
+        return DemoDomainClient(
+            base_url=self.demo_domain_url,
+            username=self.demo_domain_user,
+            password=self.demo_domain_pass
+        )
     
     async def register_event(
         self,
@@ -62,6 +72,92 @@ class EventAgent:
             except Exception as e:
                 logger.error(f"Failed to register event: {e}")
                 raise
+    
+    async def suggest_amount_with_ai(
+        self,
+        customer_id: str,
+        merchant_id: str,
+        event_code: str,
+        base_amount: float,
+        prompt_template: str
+    ) -> float:
+        """Use AI to suggest reward amount"""
+        
+        async with AIManagementClient(self.ai_management_url) as ai_client:
+            try:
+                response = await ai_client.suggest_amount(
+                    prompt=prompt_template,
+                    customer_id=customer_id,
+                    merchant_id=merchant_id,
+                    event_code=event_code,
+                    base_amount=base_amount
+                )
+                return response.get("amount", base_amount)
+            except Exception as e:
+                logger.error(f"AI suggestion failed: {e}, using base amount")
+                return base_amount
+    
+    async def register_event_with_ai_reward(
+        self,
+        event_code: str,
+        customer_id: str,
+        transaction_id: str,
+        merchant_id: str,
+        transaction_amount: float,
+        campaign_id: int = 1,  # Default campaign for AI rewards
+        event_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Register event with AI-suggested reward
+        
+        1. Get customer history
+        2. Ask AI for reward suggestion
+        3. Register event with transaction amount
+        4. Create earning with AI-suggested reward
+        """
+        
+        # 1. Get customer history
+        async with self._get_demo_domain_client() as demo_client:
+            customer_events = await demo_client.get_customer_events(customer_id, limit=5)
+        
+        # 2. Build AI prompt
+        prompt = (
+            f"Müşteri geçmişi: {customer_events}. "
+            f"Event: event_code={event_code}, customer_id={customer_id}, "
+            f"merchant_id={merchant_id}, transaction_amount={transaction_amount}. "
+            f"Bu müşteriye ne kadar ödül (reward) verilmeli? Sadece sayısal değer döndür."
+        )
+        
+        # 3. Get AI suggestion for reward
+        suggested_reward = await self.suggest_amount_with_ai(
+            customer_id=customer_id,
+            merchant_id=merchant_id,
+            event_code=event_code,
+            base_amount=transaction_amount * 0.1,  # Default %10
+            prompt_template=prompt
+        )
+        
+        # 4. Register event with TRANSACTION amount
+        event_response = await self.register_event(
+            event_code=event_code,
+            customer_id=customer_id,
+            transaction_id=transaction_id,
+            merchant_id=merchant_id,
+            amount=transaction_amount,  # ← Müşterinin ödediği para
+            event_data=event_data
+        )
+        
+        # 5. Create earning with AI-suggested REWARD
+        # Note: Bu ideal olarak demo-domain'de bir endpoint olmalı
+        # Şimdilik event_data'ya ekliyoruz
+        
+        return {
+            "event_id": event_response.get("id"),
+            "transaction_amount": transaction_amount,
+            "suggested_reward": suggested_reward,
+            "ai_prompt": prompt,
+            "customer_history_count": len(customer_events)
+        }
     
     async def get_event(self, event_id: int) -> Dict[str, Any]:
         """Get event status"""

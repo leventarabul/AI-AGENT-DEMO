@@ -98,6 +98,26 @@ services:
       - app-network
     command: python ai_server.py
 
+  # AI Agents Service
+  agents:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: ai-agents-service
+    ports:
+      - "8002:8002"
+    environment:
+      DEMO_DOMAIN_URL: http://demo-domain-api:8000
+      AI_MANAGEMENT_URL: http://ai-management:8001
+      DEMO_DOMAIN_USERNAME: ${API_USERNAME:-admin}
+      DEMO_DOMAIN_PASSWORD: ${API_PASSWORD:-admin123}
+    depends_on:
+      - demo-domain-api
+      - ai-management
+    networks:
+      - app-network
+    command: uvicorn ai_server:app --host 0.0.0.0 --port 8002 --reload
+
 volumes:
   postgres_data:
   redis_data:
