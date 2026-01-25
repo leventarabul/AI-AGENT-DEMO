@@ -12,7 +12,7 @@ docker compose up -d
 docker compose ps
 
 # Test with example curl
-curl -u admin:admin123 http://localhost:8000/health
+curl -u admin:{PASSWORD} http://localhost:8000/health
 ```
 
 ## 🏗️ Architecture
@@ -34,12 +34,12 @@ Event registration and campaign rule matching engine.
 **Quick Curl:**
 ```bash
 # Register event
-curl -X POST -u admin:admin123 http://localhost:8000/events \
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/events \
   -H "Content-Type: application/json" \
   -d '{"event_code":"PURCHASE","customer_id":"CUST_001","transaction_id":"TXN_001",...}'
 
 # Trigger job
-curl -X POST -u admin:admin123 http://localhost:8000/admin/jobs/process-events
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/admin/jobs/process-events
 ```
 
 **See:** [API_EXAMPLES.md](demo-domain/docs/API_EXAMPLES.md)
@@ -123,34 +123,34 @@ Autonomous agents for event registration and campaign management.
 ### Register and Process Event
 ```bash
 # 1. Create campaign with rule
-curl -X POST -u admin:admin123 http://localhost:8000/campaigns \
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/campaigns \
   -H "Content-Type: application/json" \
   -d '{"name":"Campaign","description":"...","start_date":"...","end_date":"..."}'
 
 # 2. Add rule to campaign
-curl -X POST -u admin:admin123 http://localhost:8000/campaigns/1/rules \
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/campaigns/1/rules \
   -H "Content-Type: application/json" \
   -d '{"rule_name":"Rule","rule_condition":{"merchant_id":"MERCHANT_001"},"reward_amount":15.50}'
 
 # 3. Register event
-curl -X POST -u admin:admin123 http://localhost:8000/events \
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/events \
   -H "Content-Type: application/json" \
   -d '{"event_code":"PURCHASE","customer_id":"CUST_001",...}'
 
 # 4. Trigger job processing
-curl -X POST -u admin:admin123 http://localhost:8000/admin/jobs/process-events
+curl -X POST -u admin:{PASSWORD} http://localhost:8000/admin/jobs/process-events
 
 # 5. Check event status
-curl -u admin:admin123 http://localhost:8000/events/1
+curl -u admin:{PASSWORD} http://localhost:8000/events/1
 ```
 
 ### View Job Execution Logs
 ```bash
 # Get latest job logs
-curl -u admin:admin123 'http://localhost:8000/admin/jobs/execution-logs?limit=5'
+curl -u admin:{PASSWORD} 'http://localhost:8000/admin/jobs/execution-logs?limit=5'
 
 # Filter by status
-curl -u admin:admin123 'http://localhost:8000/admin/jobs/execution-logs?status=completed&limit=10'
+curl -u admin:{PASSWORD} 'http://localhost:8000/admin/jobs/execution-logs?status=completed&limit=10'
 ```
 
 ### Generate Text with AI
@@ -181,9 +181,9 @@ curl -X POST http://localhost:8001/generate \
 ### Environment Variables (`.env`)
 ```env
 # Database
-DB_PASSWORD=admin123
+DB_PASSWORD=your_password
 API_USERNAME=admin
-API_PASSWORD=admin123
+API_PASSWORD=your_password
 
 # AI Services (optional)
 OPENAI_API_KEY=your_key
@@ -211,8 +211,10 @@ AI_MANAGEMENT_URL=http://ai-management:8001
 Most endpoints require HTTP Basic Auth:
 ```
 Username: admin
-Password: admin123
+Password: your_password
 ```
+
+See [docs/SECURITY.md](docs/SECURITY.md) for credential configuration.
 
 Exceptions:
 - `GET /health` - No auth required
