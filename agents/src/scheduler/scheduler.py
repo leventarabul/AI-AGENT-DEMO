@@ -181,14 +181,9 @@ class AgentScheduler:
             from src.agents.code_review_agent import CodeReviewAgent
             
             logger.info(f"  🔍 Reviewing {issue_key} with CodeReviewAgent...")
-            agent = CodeReviewAgent(
-                ai_management_url=self.ai_management_url,
-                jira_url=self.jira_url,
-                jira_username=self.jira_username,
-                jira_token=self.jira_token,
-            )
-            result = await agent.review_pull_request(issue_key, [])
-            logger.info(f"  ✅ {issue_key} reviewed successfully")
+            agent = CodeReviewAgent(repo_root=self.git_repo_path)
+            result = agent.execute({"code_changes": {}})
+            logger.info(f"  ✅ {issue_key} reviewed successfully: {result.decision}")
         
         except Exception as e:
             logger.error(f"  ❌ Error reviewing {issue_key}: {e}")
@@ -199,14 +194,9 @@ class AgentScheduler:
             from src.agents.testing_agent import TestingAgent
             
             logger.info(f"  🧪 Testing {issue_key} with TestingAgent...")
-            agent = TestingAgent(
-                jira_url=self.jira_url,
-                jira_username=self.jira_username,
-                jira_token=self.jira_token,
-                repo_path=self.git_repo_path,
-            )
-            result = await agent.run_tests(issue_key, [])
-            logger.info(f"  ✅ {issue_key} tested successfully")
+            agent = TestingAgent(repo_root=self.git_repo_path)
+            result = agent.execute({"test_files": None, "test_path": "tests/"})
+            logger.info(f"  ✅ {issue_key} tested successfully: {result.status}")
         
         except Exception as e:
             logger.error(f"  ❌ Error testing {issue_key}: {e}")
