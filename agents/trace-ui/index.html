@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SDLC Execution Trace Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+         :root {
+            --bg: #0f172a;
+            --panel: #111827;
+            --card: #1f2937;
+            --text: #e5e7eb;
+            --muted: #94a3b8;
+            --success: #22c55e;
+            --fail: #ef4444;
+            --blocked: #f97316;
+            --border: #1e293b;
+            --accent: #38bdf8;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.08), transparent 25%), radial-gradient(circle at 80% 10%, rgba(124, 58, 237, 0.08), transparent 20%), var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+        
+        .app {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            letter-spacing: -0.01em;
+        }
+        
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.12);
+            color: #7dd3fc;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            font-weight: 600;
+            font-size: 13px;
+            letter-spacing: 0.02em;
+        }
+        
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px 18px;
+            margin-bottom: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+        }
+        
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 8px;
+        }
+        
+        .meta-item {
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: var(--card);
+            border: 1px solid var(--border);
+        }
+        
+        .meta-label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.04em;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+        
+        .meta-value {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        
+        .step {
+            display: grid;
+            grid-template-columns: 56px 1fr 160px;
+            gap: 12px;
+            align-items: center;
+            padding: 14px 16px;
+            background: var(--card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+        
+        .step-number {
+            width: 40px;
+            height: 40px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            font-weight: 700;
+        }
+        
+        .step-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .step-title {
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+        
+        .step-task {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        
+        .status {
+            justify-self: end;
+            padding: 8px 12px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
+            letter-spacing: 0.02em;
+            text-align: center;
+            min-width: 120px;
+            border: 1px solid var(--border);
+        }
+        
+        .status.SUCCESS {
+            color: var(--success);
+            background: rgba(34, 197, 94, 0.08);
+            border-color: rgba(34, 197, 94, 0.35);
+        }
+        
+        .status.FAIL {
+            color: var(--fail);
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.35);
+        }
+        
+        .status.BLOCKED {
+            color: var(--blocked);
+            background: rgba(249, 115, 22, 0.08);
+            border-color: rgba(249, 115, 22, 0.35);
+        }
+        
+        .status.STARTED {
+            color: var(--muted);
+            background: rgba(148, 163, 184, 0.08);
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+        
+        .detail-line {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        
+        .error {
+            color: var(--fail);
+            font-weight: 600;
+            margin-top: 2px;
+        }
+        
+        .footer-note {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        
+        @media (max-width: 720px) {
+            .step {
+                grid-template-columns: 48px 1fr;
+            }
+            .status {
+                justify-self: start;
+                margin-top: 6px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script type="module">
+        const { useEffect, useState } = React; function StatusBadge({ status }) { const label = status || 'UNKNOWN'; return React.createElement('div', { className: `status ${label}` }, label); } function MetaItem({ label, value }) { return React.createElement('div',
+        { className: 'meta-item' }, [ React.createElement('span', { key: 'label', className: 'meta-label' }, label), React.createElement('span', { key: 'value', className: 'meta-value' }, value || '—') ]); } function StepCard({ step }) { const contents
+        = []; if (step.output_summary) { contents.push(React.createElement('div', { key: 'out', className: 'detail-line' }, step.output_summary)); } if (step.error_message) { contents.push(React.createElement('div', { key: 'err', className: 'error' },
+        step.error_message)); } return React.createElement('div', { className: 'step' }, [ React.createElement('div', { key: 'num', className: 'step-number' }, step.step_number), React.createElement('div', { key: 'main', className: 'step-main' }, [ React.createElement('div',
+        { key: 'title', className: 'step-title' }, `${step.agent_name}`), React.createElement('div', { key: 'task', className: 'step-task' }, step.agent_task || '—'), ...contents ]), React.createElement(StatusBadge, { key: 'status', status: step.status
+        }) ]); } function TraceView() { const [trace, setTrace] = useState(null); const [error, setError] = useState(null); useEffect(() => { fetch('trace-data.json') .then((res) => res.json()) .then(setTrace) .catch((err) => setError(err.message)); },
+        []); if (error) return React.createElement('div', null, `Error loading trace: ${error}`); if (!trace) return React.createElement('div', null, 'Loading trace...'); const statusColor = { SUCCESS: 'var(--success)', PARTIAL: 'var(--blocked)', FAILED:
+        'var(--fail)', RUNNING: 'var(--muted)' }[trace.pipeline_status] || 'var(--muted)'; return React.createElement('div', { className: 'app' }, [ React.createElement('header', { key: 'header' }, [ React.createElement('h1', { key: 'title' }, 'SDLC Execution
+        Trace'), React.createElement('span', { key: 'badge', className: 'badge' }, `Trace ${trace.trace_id}`) ]), React.createElement('div', { key: 'meta', className: 'panel' }, [ React.createElement('div', { key: 'title', className: 'meta-title' }, [
+        React.createElement('span', { key: 'label', className: 'meta-label' }, 'Final Status'), React.createElement('div', { key: 'status', className: 'meta-value', style: { color: statusColor, fontWeight: 700 } }, trace.pipeline_status) ]), React.createElement('div',
+        { key: 'grid', className: 'meta-grid' }, [ React.createElement(MetaItem, { key: 'intent', label: 'Intent', value: trace.intent_type }), React.createElement(MetaItem, { key: 'issue', label: 'Jira Issue', value: trace.trigger?.issue_key || '—' }),
+        React.createElement(MetaItem, { key: 'started', label: 'Started', value: trace.started_at }), React.createElement(MetaItem, { key: 'completed', label: 'Completed', value: trace.completed_at || '—' }), React.createElement(MetaItem, { key: 'plan',
+        label: 'Execution Plan', value: trace.execution_plan_summary || '—' }), ]) ]), React.createElement('div', { key: 'timeline', className: 'panel' }, [ React.createElement('div', { key: 'head', style: { display: 'flex', justifyContent: 'space-between',
+        alignItems: 'center', marginBottom: 8 } }, [ React.createElement('div', { key: 'title', className: 'step-title' }, 'Pipeline Steps'), trace.final_error ? React.createElement('div', { key: 'err', className: 'error' }, trace.final_error) : null
+        ]), React.createElement('div', { key: 'list', className: 'timeline' }, (trace.steps || []).map((step) => React.createElement(StepCard, { key: step.step_number, step })) ) ]), React.createElement('div', { key: 'note', className: 'footer-note' },
+        'Read-only view · No actions available') ]); } const root = ReactDOM.createRoot(document.getElementById('root')); root.render(React.createElement(TraceView));
+    </script>
+</body>
+
+</html>

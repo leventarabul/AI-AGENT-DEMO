@@ -27,10 +27,10 @@ class AgentScheduler:
             logger.warning("Scheduler already running")
             return
         
-        # Add scheduled jobs (every 5 minutes)
+        # Add scheduled jobs (every 30 seconds)
         self.scheduler.add_job(
             self._process_development_waiting,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(seconds=30),
             id='process_development_waiting',
             name='Process Development Waiting tasks',
             misfire_grace_time=60
@@ -38,7 +38,7 @@ class AgentScheduler:
         
         self.scheduler.add_job(
             self._process_in_review,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(seconds=30),
             id='process_in_review',
             name='Process In Review tasks',
             misfire_grace_time=60
@@ -46,14 +46,14 @@ class AgentScheduler:
         
         self.scheduler.add_job(
             self._process_testing,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(seconds=30),
             id='process_testing',
             name='Process Testing tasks',
             misfire_grace_time=60
         )
         
         self.scheduler.start()
-        logger.info("✅ Scheduler started with 5-minute intervals")
+        logger.info("✅ Scheduler started with 30-second intervals")
     
     def stop(self):
         """Stop the scheduler."""

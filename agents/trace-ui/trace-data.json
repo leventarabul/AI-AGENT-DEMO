@@ -1,0 +1,47 @@
+{
+    "trace_id": "demo-trace-123",
+    "intent_type": "development_flow",
+    "pipeline_status": "PARTIAL",
+    "trigger": {
+        "source": "jira_webhook",
+        "issue_key": "DEMO-456",
+        "intent_type": "development_flow",
+        "timestamp": "2026-01-26T12:00:00Z"
+    },
+    "started_at": "2026-01-26T12:00:01Z",
+    "completed_at": "2026-01-26T12:07:45Z",
+    "execution_plan_summary": "development_agent → code_review_agent → testing_agent",
+    "steps": [{
+            "step_number": 1,
+            "agent_name": "development_agent",
+            "agent_task": "Implement feature",
+            "status": "SUCCESS",
+            "started_at": "2026-01-26T12:00:01Z",
+            "completed_at": "2026-01-26T12:04:10Z",
+            "success": true,
+            "output_summary": "Commit abc123: feature added"
+        },
+        {
+            "step_number": 2,
+            "agent_name": "code_review_agent",
+            "agent_task": "Review changes",
+            "status": "SUCCESS",
+            "started_at": "2026-01-26T12:04:12Z",
+            "completed_at": "2026-01-26T12:05:30Z",
+            "success": true,
+            "output_summary": "Decision: APPROVE"
+        },
+        {
+            "step_number": 3,
+            "agent_name": "testing_agent",
+            "agent_task": "Run regression tests",
+            "status": "FAIL",
+            "started_at": "2026-01-26T12:05:32Z",
+            "completed_at": "2026-01-26T12:07:45Z",
+            "success": false,
+            "error_message": "Tests FAILED: 2 failing tests (payment_flow, refund_flow)",
+            "output_summary": "Status: FAIL, Tests: 18/20"
+        }
+    ],
+    "final_error": "Tests FAILED: 2 failing tests (payment_flow, refund_flow)"
+}
