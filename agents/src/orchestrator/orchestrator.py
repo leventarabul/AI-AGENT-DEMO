@@ -120,17 +120,26 @@ class PipelineResult:
 
 
 class Orchestrator:
-    """Control plane for agent orchestration.
+    """Single entry point for agent orchestration.
     
     Responsibilities:
     - Accept an intent
     - Validate the intent
-    - Apply decision rules
+    - Apply decision rules (via decision_router)
     - Execute agents sequentially
-    - Handle failures and stop pipeline immediately
+    - Detect and handle ALL agent failures centrally
     - Return complete pipeline result
     
-    This is the orchestrator AND executor.
+    CRITICAL: This is the ONLY orchestrator in the system.
+    Agents must NOT:
+    - Decide which agent runs next
+    - Call other agents directly
+    - Contain multi-step workflow logic
+    
+    The orchestrator:
+    - Plans the execution (via decision_router)
+    - Executes the plan
+    - Stops on first failure
     """
     
     def __init__(self):
@@ -167,6 +176,48 @@ class Orchestrator:
         
         self._agent_instances[agent_name] = agent
         return agent
+    
+    def _check_agent_result(self, agent_name: str, output: Any) -> tuple[bool, Optional[str]]:
+        """Centralized agent result checking.
+        
+        This is the SINGLE place where agent results are evaluated for continuation.
+        
+        Checks for:
+        1. success=False attribute
+        2. CodeReviewAgent-specific decisions (BLOCK, REQUEST_CHANGES)
+        3. Any other agent-specific failure patterns
+        
+        Args:
+            agent_name: Name of the agent that produced this output
+            output: The agent's output object
+            
+        Returns:
+            Tuple of (should_continue, error_message)
+            - (True, None) means continue pipeline
+            - (False, "reason") means stop pipeline
+        """
+        # Check 1: Generic success field
+        if hasattr(output, 'success') and not output.success:
+            error = getattr(output, 'error', 'Unknown error')
+            return False, f"Agent failed: {error}"
+        
+        # Check 2: CodeReviewAgent decision field
+        if agent_name == "code_review_agent" and hasattr(output, 'decision'):
+            from agents.code_review_agent import ReviewDecision
+            
+            if output.decision == ReviewDecision.BLOCK:
+                return False, f"Code review BLOCKED: {output.reasoning}"
+            elif output.decision == ReviewDecision.REQUEST_CHANGES:
+                return False, f"Code review REQUEST_CHANGES: {output.reasoning}"
+            # APPROVE means continue
+        
+        # Check 3: TestingAgent test failures (if applicable in future)
+        # if agent_name == "testing_agent" and hasattr(output, 'tests_failed'):
+        #     if output.tests_failed > 0:
+        #         return False, f"Tests failed: {output.tests_failed} failures"
+        
+        # All checks passed - continue pipeline
+        return True, None
     
     def route(self, intent: Intent) -> OrchestrationDecision:
         """Route an intent to an execution plan (planning phase).
@@ -255,57 +306,24 @@ class Orchestrator:
                     print(f"\n▶ Executing {task.agent}: {task.task}")
                     output = agent.execute(intent.context)
                     
-                    # Check for success
-                    if hasattr(output, 'success') and not output.success:
-                        # Agent failed
+                    # Centralized failure detection for ALL agents
+                    should_continue, error_message = self._check_agent_result(task.agent, output)
+                    
+                    if not should_continue:
+                        # Agent failed or blocked - stop pipeline
                         agent_results.append(AgentExecutionResult(
                             agent=task.agent,
                             success=False,
                             output=output,
-                            error=getattr(output, 'error', 'Unknown error'),
+                            error=error_message,
                         ))
                         
-                        # Stop pipeline on failure
                         return PipelineResult(
                             intent_type=intent.type,
                             status="partial",
                             agent_results=agent_results,
-                            error=f"Agent {task.agent} failed: {getattr(output, 'error', 'Unknown error')}",
+                            error=error_message,
                         )
-                    
-                    # Check CodeReviewAgent decision
-                    if task.agent == "code_review_agent" and hasattr(output, 'decision'):
-                        from agents.code_review_agent import ReviewDecision
-                        if output.decision == ReviewDecision.BLOCK:
-                            # Code review blocked - stop pipeline
-                            agent_results.append(AgentExecutionResult(
-                                agent=task.agent,
-                                success=False,
-                                output=output,
-                                error=f"Code review BLOCKED: {output.reasoning}",
-                            ))
-                            
-                            return PipelineResult(
-                                intent_type=intent.type,
-                                status="partial",
-                                agent_results=agent_results,
-                                error=f"Code review BLOCKED: {output.reasoning}",
-                            )
-                        elif output.decision == ReviewDecision.REQUEST_CHANGES:
-                            # Code review requested changes - stop pipeline
-                            agent_results.append(AgentExecutionResult(
-                                agent=task.agent,
-                                success=False,
-                                output=output,
-                                error=f"Code review REQUEST_CHANGES: {output.reasoning}",
-                            ))
-                            
-                            return PipelineResult(
-                                intent_type=intent.type,
-                                status="partial",
-                                agent_results=agent_results,
-                                error=f"Code review REQUEST_CHANGES: {output.reasoning}",
-                            )
                     
                     # Agent succeeded
                     agent_results.append(AgentExecutionResult(
