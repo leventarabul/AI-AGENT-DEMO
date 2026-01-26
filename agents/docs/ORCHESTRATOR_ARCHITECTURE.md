@@ -16,6 +16,9 @@ The orchestrator is the **single deterministic authority** for agent execution i
 ```
 Intent → DecisionRouter → ExecutionPlan → Orchestrator → Agents
          (planning)                        (execution)
+                                                ↓
+                                          ExecutionTrace
+                                          (observability)
 ```
 
 **Decision Phase** (`orchestrator.route()`):
@@ -27,9 +30,19 @@ Intent → DecisionRouter → ExecutionPlan → Orchestrator → Agents
 **Execution Phase** (`orchestrator.execute()`):
 - Takes the same Intent
 - Re-routes to get ExecutionPlan
+- Creates ExecutionTrace for observability
 - Executes agents sequentially
+- Records each step in trace
 - Stops on first failure
-- Returns `PipelineResult`
+- Completes trace with final status
+- Returns `PipelineResult` with `trace_id`
+
+**Tracing Phase** (parallel to execution):
+- Creates trace at pipeline start
+- Records each agent execution as a step
+- Captures STARTED → SUCCESS/FAIL/BLOCKED transitions
+- Stores trigger information
+- Provides complete execution history
 
 ### 3. Deterministic Behavior
 - **NO LLMs** in orchestration logic
@@ -71,6 +84,14 @@ class AgentTask:
 - ✅ Centralized failure handling in `_check_agent_result()`
 - ✅ Sequential execution with stop-on-failure
 - ✅ Clear separation: route() + execute()
+- ✅ Execution tracing for every pipeline run
+
+**execution_trace.py**:
+- ✅ Structured trace model (ExecutionTrace, ExecutionStep, TriggerInfo)
+- ✅ Step statuses: STARTED, SUCCESS, FAIL, BLOCKED
+- ✅ Pipeline statuses: RUNNING, SUCCESS, PARTIAL, FAILED
+- ✅ JSON-serializable, deterministic
+- ✅ TraceStore for in-memory storage
 
 **decision_router.py**:
 - ✅ Deterministic DECISION_RULES dict
@@ -227,10 +248,12 @@ When intent type is not recognized:
 
 ## Key Files
 
-- `agents/src/orchestrator/orchestrator.py`: Main orchestrator (401 lines)
+- `agents/src/orchestrator/orchestrator.py`: Main orchestrator (494 lines)
 - `agents/src/orchestrator/decision_router.py`: Decision rules (225 lines)
+- `agents/src/orchestrator/execution_trace.py`: Execution tracing (315 lines)
 - `agents/src/orchestrator/types.py`: Data types (ExecutionPlan, AgentTask, etc.)
 - `agents/docs/ORCHESTRATOR_ARCHITECTURE.md`: This document
+- `agents/docs/EXECUTION_TRACING_REPORT.md`: Tracing implementation details
 
 ## Contact
 
