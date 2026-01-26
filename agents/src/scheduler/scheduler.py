@@ -20,6 +20,12 @@ class AgentScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self._jira_client = None
+        # Cache env vars at init time (before scheduler starts)
+        self.jira_url = os.getenv("JIRA_URL")
+        self.jira_username = os.getenv("JIRA_USERNAME")
+        self.jira_token = os.getenv("JIRA_API_TOKEN")
+        self.ai_management_url = os.getenv("AI_MANAGEMENT_URL")
+        self.git_repo_path = os.getenv("GIT_REPO_PATH", "/tmp/repo")
     
     def start(self):
         """Start the scheduler."""
@@ -66,9 +72,9 @@ class AgentScheduler:
         if self._jira_client is None:
             from src.clients.jira_client import JiraClient
             self._jira_client = JiraClient(
-                jira_url=os.getenv("JIRA_URL"),
-                username=os.getenv("JIRA_USERNAME"),
-                api_token=os.getenv("JIRA_API_TOKEN"),
+                jira_url=self.jira_url,
+                username=self.jira_username,
+                api_token=self.jira_token,
             )
         return self._jira_client
     
@@ -157,11 +163,11 @@ class AgentScheduler:
             
             logger.info(f"  🚀 Processing {issue_key} with JiraAgent...")
             agent = JiraAgent(
-                jira_url=os.getenv("JIRA_URL"),
-                jira_username=os.getenv("JIRA_USERNAME"),
-                jira_token=os.getenv("JIRA_API_TOKEN"),
-                ai_management_url=os.getenv("AI_MANAGEMENT_URL"),
-                git_repo_path=os.getenv("GIT_REPO_PATH", "/tmp/repo"),
+                jira_url=self.jira_url,
+                jira_username=self.jira_username,
+                jira_token=self.jira_token,
+                ai_management_url=self.ai_management_url,
+                git_repo_path=self.git_repo_path,
             )
             result = await agent.process_task(issue_key)
             logger.info(f"  ✅ {issue_key} processed successfully")
@@ -176,10 +182,10 @@ class AgentScheduler:
             
             logger.info(f"  🔍 Reviewing {issue_key} with CodeReviewAgent...")
             agent = CodeReviewAgent(
-                ai_management_url=os.getenv("AI_MANAGEMENT_URL"),
-                jira_url=os.getenv("JIRA_URL"),
-                jira_username=os.getenv("JIRA_USERNAME"),
-                jira_token=os.getenv("JIRA_API_TOKEN"),
+                ai_management_url=self.ai_management_url,
+                jira_url=self.jira_url,
+                jira_username=self.jira_username,
+                jira_token=self.jira_token,
             )
             result = await agent.review_pull_request(issue_key, [])
             logger.info(f"  ✅ {issue_key} reviewed successfully")
@@ -194,10 +200,10 @@ class AgentScheduler:
             
             logger.info(f"  🧪 Testing {issue_key} with TestingAgent...")
             agent = TestingAgent(
-                jira_url=os.getenv("JIRA_URL"),
-                jira_username=os.getenv("JIRA_USERNAME"),
-                jira_token=os.getenv("JIRA_API_TOKEN"),
-                repo_path=os.getenv("GIT_REPO_PATH", "."),
+                jira_url=self.jira_url,
+                jira_username=self.jira_username,
+                jira_token=self.jira_token,
+                repo_path=self.git_repo_path,
             )
             result = await agent.run_tests(issue_key, [])
             logger.info(f"  ✅ {issue_key} tested successfully")

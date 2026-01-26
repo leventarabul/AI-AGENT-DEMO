@@ -6,6 +6,12 @@ import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file from agents directory
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 from src.agents.event_agent import EventAgent
 from src.agents.jira_agent import JiraAgent
 from src.agents.code_review_agent import CodeReviewAgent
