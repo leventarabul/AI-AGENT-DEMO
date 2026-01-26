@@ -1,39 +1,30 @@
 import logging
-from typing import Dict
 from fastapi import FastAPI, HTTPException
+from typing import Dict
 import httpx
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
 
-async def get_provision_code(event: Dict):
-    try:
-        provision_code = event.get('provision_code')
-        if not provision_code:
-            logger.error(f"Provision code not found in event: {event}")
-            raise ValueError("Provision code not found")
+async def get_provision_code(event_id: str) -> Dict:
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"https://api.example.com/events/{event_id}/provision_code")
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(f"Error response {exc.response.status_code} while getting provision code.")
+            raise HTTPException(status_code=exc.response.status_code, detail="Unable to get provision code.")
+        except Exception as exc:
+            logger.error(f"An unexpected error occurred while getting provision code: {exc}")
+            raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
-        return provision_code
-    except Exception as e:
-        logger.error(f"Error getting provision code: {str(e)}")
-        raise
+    return response.json()
 
-@app.post("/event")
-async def handle_event(event: Dict):
-    try:
-        provision_code = await get_provision_code(event)
-        
-        async with httpx.AsyncClient() as client:
-            campaign_rule_response = await client.get(f"http://localhost:8000/campaign_rule/{provision_code}")
+@app.get("/campaign_rule/{event_id}")
+async def campaign_rule(event_id: str):
+    provision_code = await get_provision_code(event_id)
 
-            if campaign_rule_response.status_code != 200:
-                logger.error(f"Error getting campaign rule: {campaign_rule_response.text}")
-                raise HTTPException(status_code=500, detail="Error getting campaign rule")
+    # Do some process with provision_code
+    # ...
 
-            campaign_rule = campaign_rule_response.json()
-
-        return {"provision_code": provision_code, "campaign_rule": campaign_rule}
-
-    except Exception as e:
-        logger.error(f"Error handling event: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"message": "Campaign rule applied successfully."}

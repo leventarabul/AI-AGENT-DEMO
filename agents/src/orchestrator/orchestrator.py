@@ -273,6 +273,40 @@ class Orchestrator:
                             error=f"Agent {task.agent} failed: {getattr(output, 'error', 'Unknown error')}",
                         )
                     
+                    # Check CodeReviewAgent decision
+                    if task.agent == "code_review_agent" and hasattr(output, 'decision'):
+                        from agents.code_review_agent import ReviewDecision
+                        if output.decision == ReviewDecision.BLOCK:
+                            # Code review blocked - stop pipeline
+                            agent_results.append(AgentExecutionResult(
+                                agent=task.agent,
+                                success=False,
+                                output=output,
+                                error=f"Code review BLOCKED: {output.reasoning}",
+                            ))
+                            
+                            return PipelineResult(
+                                intent_type=intent.type,
+                                status="partial",
+                                agent_results=agent_results,
+                                error=f"Code review BLOCKED: {output.reasoning}",
+                            )
+                        elif output.decision == ReviewDecision.REQUEST_CHANGES:
+                            # Code review requested changes - stop pipeline
+                            agent_results.append(AgentExecutionResult(
+                                agent=task.agent,
+                                success=False,
+                                output=output,
+                                error=f"Code review REQUEST_CHANGES: {output.reasoning}",
+                            ))
+                            
+                            return PipelineResult(
+                                intent_type=intent.type,
+                                status="partial",
+                                agent_results=agent_results,
+                                error=f"Code review REQUEST_CHANGES: {output.reasoning}",
+                            )
+                    
                     # Agent succeeded
                     agent_results.append(AgentExecutionResult(
                         agent=task.agent,

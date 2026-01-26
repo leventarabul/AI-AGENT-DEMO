@@ -1,34 +1,50 @@
 import pytest
+from starlette.testclient import TestClient
 from fastapi import HTTPException
-from httpx import AsyncClient
-from unittest import mock
-from app import app, get_provision_code, handle_event  # Replace 'app' with your module name
+from unittest.mock import patch, AsyncMock
+
+import main  # assume our original code is in main.py
+
+# instantiate our FastAPI app
+client = TestClient(main.app)
+
+@patch("main.get_provision_code", new_callable=AsyncMock)
+def test_campaign_rule_success(mock_get_provision_code):
+    mock_get_provision_code.return_value = {"provision_code": "1234"}
+
+    response = client.get("/campaign_rule/test_event_id")
+    assert response.status_code == 200
+    assert response.json() == {"message": "Campaign rule applied successfully."}
+    mock_get_provision_code.assert_called_once_with("test_event_id")
 
 
-@pytest.fixture
-def event_data():
-    return {"provision_code": "12345678"}
+@patch("main.get_provision_code", new_callable=AsyncMock)
+def test_campaign_rule_failure(mock_get_provision_code):
+    mock_get_provision_code.side_effect = HTTPException(
+        status_code=500, detail="An unexpected error occurred.")
+
+    response = client.get("/campaign_rule/test_event_id")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "An unexpected error occurred."}
+    mock_get_provision_code.assert_called_once_with("test_event_id")
 
 
-@pytest.mark.asyncio
-async def test_get_provision_code(event_data):
-    provision_code = await get_provision_code(event_data)
-    assert provision_code == event_data["provision_code"]
+@patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+def test_get_provision_code_success(mock_get):
+    mock_response = AsyncMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"provision_code": "1234"}
+    mock_get.return_value = mock_response
 
-    with pytest.raises(ValueError):
-        await get_provision_code({})
+    provision_code = main.get_provision_code("test_event_id")
+    assert provision_code == {"provision_code": "1234"}
 
 
-@pytest.mark.asyncio
-async def test_handle_event(event_data):
-    with mock.patch.object(AsyncClient, 'get', return_value=mock.Mock(status_code=200, json=mock.Mock(return_value={"rule": "test_rule"}))):
-        response = await handle_event(event_data)
-        assert response["provision_code"] == event_data["provision_code"]
-        assert response["campaign_rule"]["rule"] == "test_rule"
+@patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+def test_get_provision_code_failure(mock_get):
+    mock_response = AsyncMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("Error", request=mock_get, response=mock_response)
+    mock_get.return_value = mock_response
 
     with pytest.raises(HTTPException):
-        with mock.patch.object(AsyncClient, 'get', return_value=mock.Mock(status_code=400, text="Bad Request")):
-            await handle_event(event_data)
-
-    with pytest.raises(HTTPException):
-        await handle_event({})
+        main.get_provision_code("test_event_id")
