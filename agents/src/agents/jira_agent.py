@@ -25,7 +25,7 @@ class JiraAgent:
         self.jira_client = JiraClient(jira_url, jira_username, jira_token)
         self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL")
         self.ai_client = AIManagementClient(self.ai_management_url)
-        self.git_repo_path = git_repo_path or os.getcwd()
+        self.git_repo_path = git_repo_path or os.getenv("GIT_REPO_PATH") or os.getcwd()
         self.git_user_name = git_user_name
         self.git_user_email = git_user_email
     
@@ -80,11 +80,15 @@ class JiraAgent:
             issue_key, task_title, generated_code, generated_tests, pr_info
         )
         
-        # Step 6: Update Jira task status
-        await self.jira_client.add_comment(
-            issue_key,
-            f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
-        )
+        # Step 6: Update Jira task status (only if we actually produced a PR in a git repo)
+        can_post_success = self._is_git_repo() and pr_info.get("html_url") not in (None, "N/A")
+        if can_post_success:
+            await self.jira_client.add_comment(
+                issue_key,
+                f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
+            )
+        else:
+            print("  ⚠️ Success comment skipped: missing git repo or PR info")
         
         # Move issue to Code Review (fallback to In Review if not available)
         await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])        
@@ -195,7 +199,7 @@ class JiraAgent:
         
         # Create branch
         # If repo is not a git repository, skip git operations
-        is_git_repo = os.path.isdir(os.path.join(self.git_repo_path, ".git"))
+        is_git_repo = self._is_git_repo()
         if is_git_repo:
             subprocess.run(
                 ["git", "checkout", "-b", branch_name],
@@ -415,3 +419,7 @@ class JiraAgent:
                 if match:
                     functions.append(match.group(1))
         return functions[:5]
+
+    def _is_git_repo(self) -> bool:
+        """Check if the configured path is a git repository."""
+        return os.path.isdir(os.path.join(self.git_repo_path, ".git"))
