@@ -1,310 +1,276 @@
+"""Testing agent: Hardened implementation for SDLC pipeline.
+
+Executes real tests (pytest), captures results, and reports deterministic outcomes.
+Provides two-level results: PASS or FAIL.
+
+No code modification. No inter-agent calls.
+Structured, deterministic output.
+"""
+
 import subprocess
-import json
 import os
-from typing import Dict, Any, List
-from src.clients.jira_client import JiraClient
+import re
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional
+from enum import Enum
+
+
+class TestStatus(str, Enum):
+    """Test execution status."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+@dataclass
+class TestFailure:
+    """Single test failure details."""
+    test_name: str
+    error_message: str
+    file_path: Optional[str] = None
+    line_number: Optional[int] = None
+
+
+@dataclass
+class TestResult:
+    """Structured result from test execution."""
+    success: bool
+    status: TestStatus
+    test_count: int = 0
+    passed_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    failures: List[TestFailure] = field(default_factory=list)
+    summary: str = ""
+    coverage_percent: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    raw_output: str = ""
+    error: Optional[str] = None
 
 
 class TestingAgent:
-    """Agent that runs tests and transitions tasks based on results."""
+    """Hardened testing agent for SDLC pipeline."""
     
-    def __init__(
-        self,
-        jira_url: str = None,
-        jira_username: str = None,
-        jira_token: str = None,
-        repo_path: str = None,
-    ):
-        import os
-        self.jira_client = JiraClient(
-            jira_url or os.getenv("JIRA_URL"),
-            jira_username or os.getenv("JIRA_USERNAME"),
-            jira_token or os.getenv("JIRA_API_TOKEN"),
-        )
-        self.repo_path = repo_path or os.getenv("GIT_REPO_PATH", ".")
-    
-    async def run_tests(
-        self, issue_key: str, test_files: List[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Run tests for a task and transition based on results.
+    def __init__(self, repo_root: str = None):
+        """Initialize testing agent.
         
         Args:
-            issue_key: Jira issue key
-            test_files: List of test file paths (or None to run all tests)
+            repo_root: Root directory of the repository (defaults to current directory)
+        """
+        self.repo_root = repo_root or os.getcwd()
+    
+    def execute(self, context: Dict[str, Any]) -> TestResult:
+        """Execute tests and return structured results.
+        
+        Args:
+            context: Execution context containing:
+                - test_files: Optional list of specific test files to run
+                - test_path: Optional path to test directory (defaults to "tests/")
+                - pytest_args: Optional additional pytest arguments
         
         Returns:
-            {
-                "passed": bool,
-                "summary": str,
-                "test_count": int,
-                "passed_count": int,
-                "failed_count": int,
-                "coverage": float,
-                "failures": [list of failure details],
-                "tested_items": [list of what was tested],
-            }
+            TestResult with PASS or FAIL status and detailed metrics
         """
-        print(f"\n🧪 Running tests for {issue_key}")
-        
-        # Fetch issue context (description + comments)
-        context = await self._fetch_issue_context(issue_key)
-        print(f"  📖 Context loaded: {len(context)} chars")
-        
-        # Execute tests
-        result = await self._execute_tests(test_files, context)
-        
-        passed = result.get("passed", False)
-        summary = result.get("summary", "")
-        
-        print(f"  ✅ Tests complete: {'PASSED' if passed else 'FAILED'}")
-        print(f"  Tests: {result.get('passed_count', 0)}/{result.get('test_count', 0)} passed")
-        
-        # Transition based on result
-        if passed:
-            await self._transition_passed(issue_key, result)
-        else:
-            await self._transition_failed(issue_key, result)
-        
-        return result
-    
-    async def _fetch_issue_context(self, issue_key: str) -> str:
-        """Fetch issue description and comments for test context."""
         try:
-            issue = await self.jira_client.get_issue(issue_key)
+            test_files = context.get("test_files", None)
+            test_path = context.get("test_path", "tests/")
+            pytest_args = context.get("pytest_args", [])
             
-            context_parts = []
+            # Execute pytest
+            result = self._run_pytest(test_files, test_path, pytest_args)
             
-            # Add description
-            description = issue.get("fields", {}).get("description", "")
-            if isinstance(description, dict):
-                description = self._extract_text_from_rich_text(description)
+            return result
             
-            if description:
-                context_parts.append(f"Task Description:\n{description}\n")
-            
-            # Note: Comments would need additional API call in real Jira
-            # For now, we'll include development details from description
-            summary = issue.get("fields", {}).get("summary", "")
-            if summary:
-                context_parts.append(f"Task Title: {summary}\n")
-            
-            return "\n".join(context_parts)
         except Exception as e:
-            print(f"  ⚠️ Could not fetch issue context: {e}")
-            return ""
+            return TestResult(
+                success=False,
+                status=TestStatus.FAIL,
+                error=f"Test execution error: {str(e)}",
+                summary="Test execution failed due to internal error",
+            )
     
-    def _extract_text_from_rich_text(self, rich_text: Dict[str, Any]) -> str:
-        """Extract plain text from Jira rich text format."""
-        content = rich_text.get("content", [])
-        texts = []
-        for item in content:
-            if item.get("type") == "paragraph":
-                for child in item.get("content", []):
-                    if child.get("type") == "text":
-                        texts.append(child.get("text", ""))
-        return " ".join(texts)
-    
-    async def _execute_tests(self, test_files: List[str] = None, context: str = "") -> Dict[str, Any]:
-        """Execute pytest and parse results."""
-        print(f"  📝 Executing tests...")
+    def _run_pytest(
+        self,
+        test_files: Optional[List[str]],
+        test_path: str,
+        pytest_args: List[str],
+    ) -> TestResult:
+        """Run pytest and parse results.
         
+        Args:
+            test_files: Specific test files to run (or None for all)
+            test_path: Default test directory path
+            pytest_args: Additional pytest arguments
+        
+        Returns:
+            Parsed TestResult
+        """
         # Build pytest command
-        cmd = ["pytest", "-v", "--tb=short", "--json-report", "--json-report-file=test-report.json"]
+        cmd = ["python", "-m", "pytest", "-v", "--tb=short"]
         
+        # Add additional args
+        cmd.extend(pytest_args)
+        
+        # Add test targets
         if test_files:
             cmd.extend(test_files)
         else:
-            cmd.append("tests/")  # Default to tests/ directory
+            cmd.append(test_path)
         
         try:
-            # Run pytest
+            # Execute pytest
             result = subprocess.run(
                 cmd,
-                cwd=self.repo_path,
+                cwd=self.repo_root,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=300,  # 5 minute timeout
             )
             
-            # Parse JSON report if available
-            report_file = os.path.join(self.repo_path, "test-report.json")
-            if os.path.exists(report_file):
-                with open(report_file, "r") as f:
-                    report = json.load(f)
-            else:
-                report = {}
-            
-            # Extract test results
-            passed = result.returncode == 0
-            test_count = report.get("summary", {}).get("total", 0)
-            passed_count = report.get("summary", {}).get("passed", 0)
-            failed_count = report.get("summary", {}).get("failed", 0)
-            
-            # Parse failures
-            failures = []
-            tests = report.get("tests", [])
-            for test in tests:
-                if test.get("outcome") == "failed":
-                    failures.append({
-                        "name": test.get("nodeid", "unknown"),
-                        "error": test.get("call", {}).get("longrepr", "No error message"),
-                    })
-            
-            # Mock coverage (in real scenario, use pytest-cov)
-            coverage = 85.0 if passed else 60.0
-            
-            summary = (
-                f"All {test_count} tests passed" if passed
-                else f"{failed_count} test(s) failed out of {test_count}"
+            # Parse output
+            return self._parse_pytest_output(
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
             )
             
-            tested_items = [
-                "Unit tests executed",
-                "Integration tests executed",
-                f"Code coverage: {coverage}%",
-                "No security vulnerabilities",
-                "Performance acceptable",
-            ]
-            
-            # Add context details to tested items
-            if context:
-                tested_items.append("Task requirements validated")
-                tested_items.append("Implementation details verified")
-            
-            return {
-                "passed": passed,
-                "summary": summary,
-                "test_count": test_count,
-                "passed_count": passed_count,
-                "failed_count": failed_count,
-                "coverage": coverage,
-                "failures": failures,
-                "tested_items": tested_items,
-                "raw_output": result.stdout,
-            }
-        
         except subprocess.TimeoutExpired:
-            return {
-                "passed": False,
-                "summary": "Tests timed out",
-                "test_count": 0,
-                "passed_count": 0,
-                "failed_count": 0,
-                "coverage": 0.0,
-                "failures": [{"name": "timeout", "error": "Tests exceeded 5 minute timeout"}],
-                "tested_items": [],
-            }
+            return TestResult(
+                success=False,
+                status=TestStatus.FAIL,
+                error="Test execution timed out (5 minute limit)",
+                summary="Tests exceeded time limit",
+                failures=[
+                    TestFailure(
+                        test_name="timeout",
+                        error_message="Test suite exceeded 5 minute timeout",
+                    )
+                ],
+            )
+        
+        except FileNotFoundError:
+            return TestResult(
+                success=False,
+                status=TestStatus.FAIL,
+                error="pytest not available - is pytest installed?",
+                summary="Test framework not found",
+            )
         
         except Exception as e:
-            return {
-                "passed": False,
-                "summary": f"Test execution error: {str(e)}",
-                "test_count": 0,
-                "passed_count": 0,
-                "failed_count": 0,
-                "coverage": 0.0,
-                "failures": [{"name": "execution_error", "error": str(e)}],
-                "tested_items": [],
-            }
+            return TestResult(
+                success=False,
+                status=TestStatus.FAIL,
+                error=f"Unexpected error: {str(e)}",
+                summary="Test execution failed",
+            )
     
-    async def _transition_passed(self, issue_key: str, result: Dict[str, Any]) -> None:
-        """Transition task to Done and post test results."""
-        comment = (
-            "✅ **TESTS PASSED**\n\n"
-            "All automated tests passed successfully!\n\n"
-            "**Test Results:**\n"
-            f"- Tests Passed: {result.get('passed_count', 0)}/{result.get('test_count', 0)}\n"
-            f"- Code Coverage: {result.get('coverage', 0)}%\n\n"
-            "**Tested Items:**\n"
+    def _parse_pytest_output(
+        self,
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> TestResult:
+        """Parse pytest output and extract structured results.
+        
+        Args:
+            returncode: Pytest exit code (0 = all passed, non-zero = failures/errors)
+            stdout: Standard output from pytest
+            stderr: Standard error from pytest
+        
+        Returns:
+            Structured TestResult
+        """
+        raw_output = f"{stdout}\n{stderr}"
+        
+        # Parse test counts from pytest output
+        # Typical pytest output: "===== 5 passed, 2 failed in 1.23s ====="
+        test_count = 0
+        passed_count = 0
+        failed_count = 0
+        skipped_count = 0
+        duration = None
+        
+        # Look for summary line
+        for line in stdout.split("\n"):
+            if "passed" in line or "failed" in line:
+                # Extract numbers
+                passed_match = re.search(r"(\d+)\s+passed", line)
+                if passed_match:
+                    passed_count = int(passed_match.group(1))
+                
+                failed_match = re.search(r"(\d+)\s+failed", line)
+                if failed_match:
+                    failed_count = int(failed_match.group(1))
+                
+                skipped_match = re.search(r"(\d+)\s+skipped", line)
+                if skipped_match:
+                    skipped_count = int(skipped_match.group(1))
+                
+                # Extract duration
+                duration_match = re.search(r"in\s+([\d.]+)s", line)
+                if duration_match:
+                    duration = float(duration_match.group(1))
+        
+        test_count = passed_count + failed_count + skipped_count
+        
+        # Parse failures
+        failures = self._extract_failures(stdout)
+        
+        # Determine status
+        if returncode == 0:
+            status = TestStatus.PASS
+            success = True
+            summary = f"All {test_count} tests passed"
+        else:
+            status = TestStatus.FAIL
+            success = False
+            if failed_count > 0:
+                summary = f"{failed_count} test(s) failed out of {test_count}"
+            else:
+                summary = "Test execution failed"
+        
+        return TestResult(
+            success=success,
+            status=status,
+            test_count=test_count,
+            passed_count=passed_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            failures=failures,
+            summary=summary,
+            duration_seconds=duration,
+            raw_output=raw_output,
         )
-        
-        for item in result.get("tested_items", []):
-            comment += f"- {item}\n"
-        
-        comment += (
-            "\n**Status:** Task is ready for production deployment! ✨"
-        )
-        
-        await self.jira_client.add_comment(issue_key, comment)
-        
-        print(f"  ✅ Success comment posted to {issue_key}")
-        print(f"  📝 (Manual transition to Done recommended)")
     
-    async def _transition_failed(self, issue_key: str, result: Dict[str, Any]) -> None:
-        """Transition task back to Development Waiting and post failure details."""
-        comment = (
-            "❌ **TESTS FAILED**\n\n"
-            "Some tests failed during automated testing. Please fix the issues below.\n\n"
-            f"**Summary:** {result.get('summary', 'Unknown error')}\n"
-            f"- Tests Passed: {result.get('passed_count', 0)}/{result.get('test_count', 0)}\n"
-            f"- Tests Failed: {result.get('failed_count', 0)}\n"
-            f"- Code Coverage: {result.get('coverage', 0)}%\n\n"
-            "**Failed Tests:**\n"
-        )
+    def _extract_failures(self, stdout: str) -> List[TestFailure]:
+        """Extract failure details from pytest output.
         
-        for failure in result.get("failures", [])[:5]:  # Limit to 5 failures
-            comment += f"\n**{failure.get('name', 'Unknown')}**\n"
-            comment += f"```\n{failure.get('error', 'No error message')[:200]}\n```\n"
+        Args:
+            stdout: Pytest standard output
         
-        if len(result.get("failures", [])) > 5:
-            comment += f"\n... and {len(result['failures']) - 5} more failures\n"
+        Returns:
+            List of TestFailure objects
+        """
+        failures = []
         
-        comment += (
-            "\n**Action Required:**\n"
-            "- Review the test failures above\n"
-            "- Fix the code to make tests pass\n"
-            "- Commit and push the fixes\n"
-            "- Re-submit to testing\n"
-        )
+        # Look for FAILED test lines
+        # Format: "FAILED tests/test_example.py::test_function - AssertionError: ..."
+        for line in stdout.split("\n"):
+            if line.startswith("FAILED"):
+                match = re.match(r"FAILED\s+([^\s]+)\s+-\s+(.+)", line)
+                if match:
+                    test_name = match.group(1)
+                    error_message = match.group(2).strip()
+                    
+                    # Extract file path
+                    file_match = re.match(r"([^:]+)::", test_name)
+                    file_path = file_match.group(1) if file_match else None
+                    
+                    failures.append(
+                        TestFailure(
+                            test_name=test_name,
+                            error_message=error_message,
+                            file_path=file_path,
+                        )
+                    )
         
-        await self.jira_client.add_comment(issue_key, comment)
-        
-        print(f"  ❌ Failure comment posted to {issue_key}")
-        print(f"  🔄 (Manual transition to Development Waiting recommended)")
-
-
-class TestMetricsCollector:
-    """Helper to collect test metrics."""
-    
-    @staticmethod
-    def parse_pytest_output(output: str) -> Dict[str, Any]:
-        """Parse pytest output for metrics."""
-        metrics = {
-            "total": 0,
-            "passed": 0,
-            "failed": 0,
-            "skipped": 0,
-            "errors": 0,
-        }
-        
-        lines = output.split("\n")
-        for line in lines:
-            if " passed" in line:
-                try:
-                    metrics["passed"] = int(line.split()[0])
-                except (ValueError, IndexError):
-                    pass
-            elif " failed" in line:
-                try:
-                    metrics["failed"] = int(line.split()[0])
-                except (ValueError, IndexError):
-                    pass
-        
-        metrics["total"] = metrics["passed"] + metrics["failed"]
-        return metrics
-    
-    @staticmethod
-    def calculate_coverage(output: str) -> float:
-        """Extract code coverage from pytest output."""
-        try:
-            for line in output.split("\n"):
-                if "coverage" in line.lower() and "%" in line:
-                    import re
-                    match = re.search(r"(\d+(?:\.\d+)?)\%", line)
-                    if match:
-                        return float(match.group(1))
-        except Exception:
-            pass
-        
-        return 0.0
+        return failures

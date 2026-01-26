@@ -183,8 +183,8 @@ class Orchestrator:
         This is the SINGLE place where agent results are evaluated for continuation.
         
         Checks for:
-        1. success=False attribute
-        2. CodeReviewAgent-specific decisions (BLOCK, REQUEST_CHANGES)
+        1. Agent-specific status fields (CodeReviewAgent.decision, TestingAgent.status)
+        2. Generic success=False attribute
         3. Any other agent-specific failure patterns
         
         Args:
@@ -196,12 +196,7 @@ class Orchestrator:
             - (True, None) means continue pipeline
             - (False, "reason") means stop pipeline
         """
-        # Check 1: Generic success field
-        if hasattr(output, 'success') and not output.success:
-            error = getattr(output, 'error', 'Unknown error')
-            return False, f"Agent failed: {error}"
-        
-        # Check 2: CodeReviewAgent decision field
+        # Check 1: CodeReviewAgent decision field (checked BEFORE generic success)
         if agent_name == "code_review_agent" and hasattr(output, 'decision'):
             from agents.code_review_agent import ReviewDecision
             
@@ -211,10 +206,18 @@ class Orchestrator:
                 return False, f"Code review REQUEST_CHANGES: {output.reasoning}"
             # APPROVE means continue
         
-        # Check 3: TestingAgent test failures (if applicable in future)
-        # if agent_name == "testing_agent" and hasattr(output, 'tests_failed'):
-        #     if output.tests_failed > 0:
-        #         return False, f"Tests failed: {output.tests_failed} failures"
+        # Check 2: TestingAgent status field (checked BEFORE generic success)
+        if agent_name == "testing_agent" and hasattr(output, 'status'):
+            from agents.testing_agent import TestStatus
+            
+            if output.status == TestStatus.FAIL:
+                return False, f"Tests FAILED: {output.summary} ({output.failed_count} failures)"
+            # PASS means continue
+        
+        # Check 3: Generic success field (fallback for agents without specific status)
+        if hasattr(output, 'success') and not output.success:
+            error = getattr(output, 'error', 'Unknown error')
+            return False, f"Agent failed: {error}"
         
         # All checks passed - continue pipeline
         return True, None
