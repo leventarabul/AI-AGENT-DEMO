@@ -22,7 +22,16 @@ Intent → DecisionRouter → ExecutionPlan → Orchestrator → Agents
                                                 ↓
                                           JiraFeedback
                                           (SDLC loop)
+                                ↓
+                            LearningGate
+                            (pattern detection)
 ```
+
+**Learning Phase** (after execution):
+- Analyzes ExecutionTrace for patterns
+- Detects repeated failures
+- Generates knowledge proposals
+- NO autonomous learning (human approval required)
 
 **Decision Phase** (`orchestrator.route()`):
 - Takes an Intent
@@ -108,6 +117,14 @@ class AgentTask:
 - ✅ Automatic status transitions (SUCCESS → Done, FAIL → Blocked)
 - ✅ Single source of truth (uses ExecutionTrace)
 - ✅ One-way communication (orchestrator-controlled)
+
+**learning_gate.py**:
+- ✅ PatternDetector for failure pattern detection
+- ✅ LearningGate with threshold-based evaluation
+- ✅ Deterministic confidence scoring
+- ✅ Structured LearningProposal generation
+- ✅ NO autonomous learning (human-in-the-loop)
+- ✅ ProposalStore for tracking insights
 
 **decision_router.py**:
 - ✅ Deterministic DECISION_RULES dict
@@ -268,10 +285,12 @@ When intent type is not recognized:
 - `agents/src/orchestrator/decision_router.py`: Decision rules (225 lines)
 - `agents/src/orchestrator/execution_trace.py`: Execution tracing (315 lines)
 - `agents/src/orchestrator/jira_feedback.py`: Jira feedback loop (225 lines)
+- `agents/src/orchestrator/learning_gate.py`: Pattern detection & proposals (671 lines)
 - `agents/src/orchestrator/types.py`: Data types (ExecutionPlan, AgentTask, etc.)
 - `agents/docs/ORCHESTRATOR_ARCHITECTURE.md`: This document
 - `agents/docs/EXECUTION_TRACING_REPORT.md`: Tracing implementation details
 - `agents/docs/JIRA_FEEDBACK_LOOP.md`: Jira integration documentation
+- `agents/docs/LEARNING_GATE.md`: Learning Gate implementation guide
 
 ## Contact
 
