@@ -2,10 +2,13 @@
 
 Accepts an intent, applies decision rules, executes agents sequentially.
 Controls the entire development pipeline.
+
+Includes execution tracing for observability and debugging.
 """
 
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
+import uuid
 from orchestrator.decision_router import (
     apply_rules,
     ExecutionPlan,
@@ -13,6 +16,13 @@ from orchestrator.decision_router import (
     MissingContextError,
     list_available_intents,
     get_intent_requirements,
+)
+from orchestrator.execution_trace import (
+    ExecutionTrace,
+    TriggerInfo,
+    StepStatus,
+    PipelineStatus,
+    get_trace_store,
 )
 
 
@@ -97,12 +107,14 @@ class PipelineResult:
         agent_results: List of AgentExecutionResult in execution order
         final_commit: Git commit hash if development was successful
         error: Error message if status is "failure"
+        trace_id: ID of the execution trace for this run
     """
     intent_type: str
     status: str  # "success", "partial", "failure"
     agent_results: List[AgentExecutionResult]
     final_commit: Optional[str] = None
     error: Optional[str] = None
+    trace_id: Optional[str] = None
     
     def __repr__(self):
         """Human-readable representation."""
@@ -114,7 +126,8 @@ class PipelineResult:
             f"  intent={self.intent_type},\n"
             f"  status={self.status},\n"
             f"  agents_executed={agents_executed}/{total_agents},\n"
-            f"  final_commit={self.final_commit or 'N/A'}\n"
+            f"  final_commit={self.final_commit or 'N/A'},\n"
+            f"  trace_id={self.trace_id or 'N/A'}\n"
             f")"
         )
 
@@ -269,32 +282,60 @@ class Orchestrator:
         """Execute the full pipeline for an intent (execution phase).
         
         Sequence:
-        1. Route the intent (planning)
-        2. Execute agents in order
-        3. Stop on first failure
-        4. Return complete results
+        1. Create execution trace
+        2. Route the intent (planning)
+        3. Execute agents in order
+        4. Record each step in trace
+        5. Stop on first failure
+        6. Return complete results with trace ID
         
         Args:
             intent: The user intent to fulfill
             
         Returns:
-            PipelineResult with execution status and agent outputs
+            PipelineResult with execution status, agent outputs, and trace ID
         """
+        
+        # Create execution trace
+        trace_id = str(uuid.uuid4())
+        trigger = TriggerInfo(
+            source=intent.metadata.get("source", "unknown") if intent.metadata else "unknown",
+            issue_key=intent.context.get("issue_key"),
+            intent_type=intent.type,
+        )
+        
+        trace = ExecutionTrace(
+            trace_id=trace_id,
+            trigger=trigger,
+            intent_type=intent.type,
+            pipeline_status=PipelineStatus.RUNNING,
+            started_at=None,  # Will be set by __post_init__
+        )
+        
+        # Store trace immediately
+        get_trace_store().store(trace)
         
         try:
             # Validate intent
             if not isinstance(intent, Intent):
+                trace.complete(PipelineStatus.FAILED, "Input must be an Intent object")
                 raise ValueError("Input must be an Intent object")
             
             # Plan the pipeline
             decision = self.route(intent)
             if decision.status == "error":
+                trace.complete(PipelineStatus.FAILED, decision.error)
                 return PipelineResult(
                     intent_type=intent.type,
                     status="failure",
                     agent_results=[],
                     error=decision.error,
+                    trace_id=trace_id,
                 )
+            
+            # Record execution plan in trace
+            agents_summary = " → ".join([t.agent for t in decision.execution_plan.tasks])
+            trace.execution_plan_summary = agents_summary
             
             # Execute agents sequentially
             agent_results = []
@@ -302,6 +343,13 @@ class Orchestrator:
             
             for i, task in enumerate(decision.execution_plan.tasks):
                 try:
+                    # Record step start
+                    step = trace.add_step(
+                        agent_name=task.agent,
+                        agent_task=task.task,
+                        status=StepStatus.STARTED,
+                    )
+                    
                     # Get agent instance
                     agent = self._get_agent(task.agent)
                     
@@ -314,6 +362,20 @@ class Orchestrator:
                     
                     if not should_continue:
                         # Agent failed or blocked - stop pipeline
+                        
+                        # Determine step status based on error type
+                        if "BLOCKED" in error_message or "BLOCK" in error_message:
+                            step_status = StepStatus.BLOCKED
+                        else:
+                            step_status = StepStatus.FAIL
+                        
+                        trace.update_step(
+                            step_number=step.step_number,
+                            status=step_status,
+                            success=False,
+                            error_message=error_message,
+                        )
+                        
                         agent_results.append(AgentExecutionResult(
                             agent=task.agent,
                             success=False,
@@ -321,14 +383,24 @@ class Orchestrator:
                             error=error_message,
                         ))
                         
+                        trace.complete(PipelineStatus.PARTIAL, error_message)
+                        
                         return PipelineResult(
                             intent_type=intent.type,
                             status="partial",
                             agent_results=agent_results,
                             error=error_message,
+                            trace_id=trace_id,
                         )
                     
                     # Agent succeeded
+                    trace.update_step(
+                        step_number=step.step_number,
+                        status=StepStatus.SUCCESS,
+                        success=True,
+                        output_summary=self._get_output_summary(task.agent, output),
+                    )
+                    
                     agent_results.append(AgentExecutionResult(
                         agent=task.agent,
                         success=True,
@@ -342,12 +414,21 @@ class Orchestrator:
                     print(f"✓ {task.agent} completed successfully")
                     
                 except Exception as e:
-                    # Execution error
+                    # Execution error - update trace
+                    trace.update_step(
+                        step_number=len(trace.steps),
+                        status=StepStatus.FAIL,
+                        success=False,
+                        error_message=str(e),
+                    )
+                    
                     agent_results.append(AgentExecutionResult(
                         agent=task.agent,
                         success=False,
                         error=str(e),
                     ))
+                    
+                    trace.complete(PipelineStatus.PARTIAL, f"Error executing {task.agent}: {str(e)}")
                     
                     # Stop pipeline on error
                     return PipelineResult(
@@ -356,23 +437,49 @@ class Orchestrator:
                         agent_results=agent_results,
                         final_commit=final_commit,
                         error=f"Error executing {task.agent}: {str(e)}",
+                        trace_id=trace_id,
                     )
             
             # All agents succeeded
+            trace.complete(PipelineStatus.SUCCESS)
+            
             return PipelineResult(
                 intent_type=intent.type,
                 status="success",
                 agent_results=agent_results,
                 final_commit=final_commit,
+                trace_id=trace_id,
             )
             
         except Exception as e:
+            trace.complete(PipelineStatus.FAILED, f"Orchestration error: {str(e)}")
+            
             return PipelineResult(
                 intent_type=intent.type if isinstance(intent, Intent) else "unknown",
                 status="failure",
                 agent_results=[],
                 error=f"Orchestration error: {str(e)}",
+                trace_id=trace_id,
             )
+    
+    def _get_output_summary(self, agent_name: str, output: Any) -> str:
+        """Generate a brief summary of agent output for tracing.
+        
+        Args:
+            agent_name: Name of the agent
+            output: Agent output object
+            
+        Returns:
+            Brief summary string
+        """
+        if agent_name == "code_review_agent" and hasattr(output, 'decision'):
+            return f"Decision: {output.decision.value}"
+        elif agent_name == "testing_agent" and hasattr(output, 'status'):
+            return f"Status: {output.status.value}, Tests: {output.passed_count}/{output.test_count}"
+        elif hasattr(output, 'success'):
+            return f"Success: {output.success}"
+        else:
+            return "Completed"
     
     def get_available_intents(self) -> Dict[str, List[str]]:
         """Return all available intent types and their requirements.
