@@ -39,6 +39,8 @@ class OpenAIClient(BaseLLMClient):
     ) -> LLMResponse:
         """Generate text using OpenAI API"""
         
+        import json
+        
         temp = temperature if temperature is not None else self.temperature
         
         messages = []
@@ -53,6 +55,14 @@ class OpenAIClient(BaseLLMClient):
             "temperature": temp,
         }
         
+        # Log request
+        logger.info("\n" + "="*100)
+        logger.info("📤 OPENAI REQUEST")
+        logger.info("="*100)
+        logger.info(f"URL: POST {self.base_url}/chat/completions")
+        logger.info(f"\nPayload:\n{json.dumps(payload, indent=2)}")
+        logger.info("="*100)
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -63,12 +73,25 @@ class OpenAIClient(BaseLLMClient):
                 ) as response:
                     if response.status != 200:
                         error_data = await response.json()
+                        logger.error(f"\n❌ OPENAI ERROR (HTTP {response.status}):\n{json.dumps(error_data, indent=2)}")
                         raise Exception(f"OpenAI API error: {error_data}")
                     
                     data = await response.json()
                     
+                    # Log response
+                    logger.info("\n" + "="*100)
+                    logger.info("📥 OPENAI RESPONSE")
+                    logger.info("="*100)
+                    logger.info(f"Status: {response.status} OK")
+                    logger.info(f"\nFull Response:\n{json.dumps(data, indent=2)}")
+                    logger.info("="*100)
+                    
+                    text = data["choices"][0]["message"]["content"]
+                    logger.info(f"\n✅ Generated Text (first 500 chars):\n{text[:500]}")
+                    logger.info("="*100 + "\n")
+                    
                     return LLMResponse(
-                        text=data["choices"][0]["message"]["content"],
+                        text=text,
                         model=self.model,
                         provider="openai",
                         token_count=data["usage"]["total_tokens"],
@@ -78,7 +101,7 @@ class OpenAIClient(BaseLLMClient):
                     )
         
         except Exception as e:
-            logger.error(f"Error calling OpenAI API: {e}")
+            logger.error(f"\n❌ ERROR calling OpenAI API: {e}\n")
             raise
     
     def count_tokens(self, text: str) -> int:
