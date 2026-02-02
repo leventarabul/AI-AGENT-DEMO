@@ -1,47 +1,52 @@
 import pytest
-from unittest.mock import patch, Mock
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-from httpx import HTTPStatusError
-
-from main import app, Event, EventIn, HTTPException
-
-client = TestClient(app)
+from unittest.mock import patch, MagicMock
+from app import app, Event, EventRequest
 
 @pytest.fixture
-def mock_db_session():
-    session = Mock(spec=Session)
-    return session
+def test_client():
+    client = TestClient(app)
+    yield client
 
-@pytest.fixture
-def event_in():
-    return EventIn(channel="test")
+def test_create_event_success(test_client):
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
+        "amount": 100.0,
+        "event_data": {"key": "value"},
+        "transaction_date": "2022-01-01T00:00:00Z",
+        "channel": "web"
+    }
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 200
+    assert response.json()["event_code"] == event_data["event_code"]
 
-@pytest.fixture
-def event():
-    return Event(channel="test")
+def test_create_event_missing_field(test_client):
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
+        "amount": 100.0,
+        "event_data": {"key": "value"},
+        "transaction_date": "2022-01-01T00:00:00Z"
+    }
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 422
 
-def test_create_event_success(mock_db_session, event_in, event):
-    with patch('main.session', new=mock_db_session):
-        response = client.post("/events/", json=event_in.dict())
-        assert response.status_code == 200
-        assert "id" in response.json()
-        mock_db_session.add.assert_called_once_with(event)
-        mock_db_session.commit.assert_called_once()
-
-def test_create_event_db_error(mock_db_session, event_in):
-    mock_db_session.add.side_effect = Exception("DB error")
-    with patch('main.session', new=mock_db_session):
-        with pytest.raises(HTTPStatusError) as e:
-            client.post("/events/", json=event_in.dict())
-        assert e.value.status_code == 500
-        assert str(e.value) == "Failed to create event"
-        mock_db_session.add.assert_called_once()
-        mock_db_session.rollback.assert_called_once()
-        mock_db_session.commit.assert_not_called()
-
-def test_create_event_validation_error(event_in):
-    event_in.channel = None
-    with pytest.raises(HTTPStatusError) as e:
-        client.post("/events/", json=event_in.dict())
-    assert e.value.status_code == 422  # validation error status code
+@patch('app.Event.save', MagicMock())
+def test_create_event_database_error(test_client):
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
+        "amount": 100.0,
+        "event_data": {"key": "value"},
+        "transaction_date": "2022-01-01T00:00:00Z",
+        "channel": "web"
+    }
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 500
