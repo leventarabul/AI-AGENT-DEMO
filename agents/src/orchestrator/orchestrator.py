@@ -9,6 +9,7 @@ Includes execution tracing for observability and debugging.
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 import uuid
+import os
 from orchestrator.decision_router import (
     apply_rules,
     ExecutionPlan,
@@ -190,6 +191,97 @@ class Orchestrator:
         self._agent_instances[agent_name] = agent
         return agent
     
+    def _execute_git_operations(
+        self,
+        dev_output: Any,
+        intent_context: Dict[str, Any],
+        trace: Any,
+        step: Any,
+    ) -> Optional[str]:
+        """Execute git operations after DevelopmentAgent completes.
+        
+        This is called by the orchestrator (NOT by the agent itself).
+        
+        Args:
+            dev_output: DevelopmentResult from development_agent
+            intent_context: The intent context (for branch name, etc.)
+            trace: ExecutionTrace for recording steps
+            step: Current execution step
+            
+        Returns:
+            Commit hash if successful, None if failed
+        """
+        try:
+            from orchestrator.git_service import create_git_service
+            
+            # Convert FileChange objects to dicts for GitService
+            files_list = []
+            for file_change in dev_output.files:
+                files_list.append({
+                    "path": file_change.path,
+                    "content": file_change.content,
+                })
+            
+            # Get repository root (from context or use current directory)
+            repo_root = intent_context.get("repo_root") or os.getcwd()
+            
+            # Get branch name
+            jira_key = intent_context.get("jira_issue_key", "AUTO")
+            branch_name = intent_context.get("branch_name") or f"develop/{jira_key.lower()}"
+            
+            # Create GitService
+            git_service = create_git_service(repo_root)
+            
+            # Execute git operations
+            print(f"  🔧 Running git operations in {repo_root}")
+            git_result = git_service.execute_operation(
+                files=files_list,
+                commit_message=dev_output.commit_message,
+                branch_name=branch_name,
+            )
+            
+            # Check result
+            if not git_result.success:
+                error_msg = f"Git operations failed: {git_result.error}"
+                print(f"  ✗ {error_msg}")
+                
+                # Update trace with error
+                trace.update_step(
+                    step_number=step.step_number,
+                    status=StepStatus.FAIL,
+                    success=False,
+                    error_message=error_msg,
+                )
+                trace.complete(PipelineStatus.PARTIAL, error_msg)
+                
+                return None
+            
+            # Success - update trace
+            summary = f"Committed {len(git_result.files_written)} files to {branch_name}"
+            trace.update_step(
+                step_number=step.step_number,
+                status=StepStatus.SUCCESS,
+                success=True,
+                output_summary=summary,
+            )
+            
+            return git_result.commit_hash
+            
+        except Exception as e:
+            error_msg = f"Git operations exception: {str(e)}"
+            print(f"  ✗ {error_msg}")
+            
+            # Update trace
+            trace.update_step(
+                step_number=step.step_number,
+                status=StepStatus.FAIL,
+                success=False,
+                error_message=error_msg,
+            )
+            trace.complete(PipelineStatus.PARTIAL, error_msg)
+            
+            return None
+    
     def _check_agent_result(self, agent_name: str, output: Any) -> tuple[bool, Optional[str]]:
         """Centralized agent result checking.
         
@@ -356,6 +448,25 @@ class Orchestrator:
                     # Execute agent
                     print(f"\n▶ Executing {task.agent}: {task.task}")
                     output = agent.execute(intent.context)
+                    
+                    # POST-EXECUTION HOOK: If development_agent, run git operations
+                    if task.agent == "development_agent" and output.success:
+                        print(f"  📝 Development agent completed. Processing git operations...")
+                        git_result = self._execute_git_operations(output, intent.context, trace, step)
+                        
+                        if not git_result:
+                            # Git operations failed - stop pipeline
+                            return PipelineResult(
+                                intent_type=intent.type,
+                                status="partial",
+                                agent_results=agent_results,
+                                error="Git operations failed after development_agent",
+                                trace_id=trace_id,
+                            )
+                        
+                        # Git succeeded - extract commit hash
+                        final_commit = git_result
+                        print(f"  ✓ Git operations completed. Commit: {final_commit}")
                     
                     # Centralized failure detection for ALL agents
                     should_continue, error_message = self._check_agent_result(task.agent, output)

@@ -1,62 +1,91 @@
-"""Development agent for code file creation/update and Git operations.
+"""Development agent for code generation and structured output.
 
 Responsible for:
-- Creating or updating code files
-- Committing changes with clear messages
-- Pushing commits to the repository
+- Generating code based on intent context
+- Returning structured output with files and commit message
+
+IMPORTANT: This agent does NOT perform git operations.
+Git operations (commit, push) are handled by GitService in the orchestrator.
 
 Input: Structured intent context with code changes
-Output: Structured result with file paths and commit hash
+Output: Structured result with files to create/update and commit message
 """
 
-import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, List
-from pathlib import Path
+
+
+@dataclass
+class FileChange:
+    """Represents a single file to be created or modified.
+    
+    Attributes:
+        path: File path relative to repo root
+        content: Full file content to write
+    """
+    path: str
+    content: str
 
 
 @dataclass
 class DevelopmentResult:
     """Structured output from development agent.
     
+    This output is consumed by GitService (in orchestrator layer) to perform
+    actual file I/O and git operations.
+    
     Attributes:
-        success: Whether development completed successfully
-        files_modified: List of file paths modified
-        commit_hash: Git commit hash if push succeeded
-        commit_message: Commit message used
+        success: Whether code generation completed successfully
+        files: List of FileChange objects (path + full content)
+        commit_message: Message to use for git commit
         error: Error message if success is False
     """
     success: bool
-    files_modified: List[str]
-    commit_hash: str = None
-    commit_message: str = None
+    files: List[FileChange] = field(default_factory=list)
+    commit_message: str = ""
     error: str = None
 
 
 class DevelopmentAgent:
-    """Agent for executing development workflows."""
+    """Agent for generating code based on development intents.
+    
+    This agent:
+    - Receives code changes from the intent context
+    - Generates structured output with file contents and commit message
+    - Returns immediately WITHOUT performing git operations
+    
+    Git operations (write files, commit, push) are handled by:
+    - GitService (orchestrator/git_service.py)
+    - Called by the Orchestrator after this agent completes
+    """
     
     def __init__(self, repo_root: str = None):
         """Initialize development agent.
         
         Args:
             repo_root: Root directory of the Git repository
-                      (default: current directory)
+                      (unused by this agent, kept for compatibility)
         """
-        self.repo_root = repo_root or os.getcwd()
+        # Note: repo_root is not used by DevelopmentAgent.
+        # It's passed to GitService by the Orchestrator.
+        self.repo_root = repo_root
     
     def execute(self, context: Dict[str, Any]) -> DevelopmentResult:
-        """Execute development workflow.
+        """Generate code changes and return structured output.
         
         Args:
             context: Intent context containing:
                 - jira_issue_key (str): Jira issue key
-                - jira_issue_status (str): Jira issue status
+                - jira_issue_status (str): Jira issue status  
                 - code_changes (dict): File path -> file content mapping
                 - branch_name (str, optional): Git branch name
         
         Returns:
-            DevelopmentResult with execution status and details
+            DevelopmentResult with files to create/update and commit message
+            
+        Note:
+            This method returns immediately after structuring the output.
+            GitService in the orchestrator will handle actual file I/O and git operations.
         """
         try:
             # Validate input
@@ -64,27 +93,28 @@ class DevelopmentAgent:
             
             # Extract parameters
             jira_key = context.get("jira_issue_key")
-            code_changes = context.get("code_changes")
+            code_changes = context.get("code_changes", {})
             branch_name = context.get("branch_name") or f"develop/{jira_key.lower()}"
             
-            # Create/update files
-            files_modified = self._write_files(code_changes)
+            # Convert code_changes dict to FileChange objects
+            files = []
+            for file_path, content in code_changes.items():
+                files.append(FileChange(path=file_path, content=content))
             
-            # Commit and push
-            commit_message = f"feat({jira_key}): {context.get('jira_issue_status')}"
-            commit_hash = self._commit_and_push(files_modified, commit_message, branch_name)
+            # Create commit message
+            commit_message = f"feat({jira_key}): {context.get('jira_issue_status', 'Development')}"
             
+            # Return structured output for GitService to process
             return DevelopmentResult(
                 success=True,
-                files_modified=files_modified,
-                commit_hash=commit_hash,
+                files=files,
                 commit_message=commit_message,
             )
             
         except Exception as e:
             return DevelopmentResult(
                 success=False,
-                files_modified=[],
+                files=[],
                 error=str(e),
             )
     
@@ -104,100 +134,3 @@ class DevelopmentAgent:
         
         if not isinstance(context["code_changes"], dict):
             raise ValueError("code_changes must be a dictionary (file_path -> content)")
-    
-    def _write_files(self, code_changes: Dict[str, str]) -> List[str]:
-        """Write code files to disk.
-        
-        Args:
-            code_changes: File path -> file content mapping
-        
-        Returns:
-            List of file paths that were written
-        
-        Raises:
-            IOError: If file write fails
-        """
-        files_modified = []
-        
-        for file_path, content in code_changes.items():
-            # Ensure path is within repo root
-            full_path = os.path.join(self.repo_root, file_path)
-            full_path = os.path.abspath(full_path)
-            
-            if not full_path.startswith(os.path.abspath(self.repo_root)):
-                raise ValueError(f"File path escapes repo root: {file_path}")
-            
-            # Create parent directories if needed
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            
-            # Write file
-            with open(full_path, "w") as f:
-                f.write(content)
-            
-            files_modified.append(file_path)
-        
-        return files_modified
-    
-    def _commit_and_push(
-        self, 
-        files: List[str], 
-        message: str, 
-        branch: str
-    ) -> str:
-        """Commit and push changes to Git.
-        
-        Args:
-            files: List of file paths to commit
-            message: Commit message
-            branch: Branch name to push to
-        
-        Returns:
-            Commit hash
-        
-        Raises:
-            RuntimeError: If Git operations fail
-        """
-        import subprocess
-        
-        try:
-            # Stage files
-            subprocess.run(
-                ["git", "add"] + files,
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-            )
-            
-            # Commit
-            result = subprocess.run(
-                ["git", "commit", "-m", message],
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            
-            # Get commit hash
-            hash_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            commit_hash = hash_result.stdout.strip()
-            
-            # Push to current branch (or specified branch)
-            subprocess.run(
-                ["git", "push", "origin", branch],
-                cwd=self.repo_root,
-                check=True,
-                capture_output=True,
-            )
-            
-            return commit_hash
-            
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Git operation failed: {e.stderr or e.stdout}"
-            )
