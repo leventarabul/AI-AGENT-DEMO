@@ -1,51 +1,72 @@
 import pytest
-from httpx import AsyncClient
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock
+from datetime import datetime
 
-from agents.SCRUM-7_impl import router, NewEvent
+from main import app, Event, create_event
 
 @pytest.fixture
 def test_client():
-    return TestClient(router)
+    return TestClient(app)
 
-@pytest.mark.asyncio
-async def test_create_event_success(test_client):
+def test_create_event(test_client):
     event_data = {
-        "event_code": "TEST123",
-        "customer_id": "CUST123",
-        "transaction_id": "TRANS123",
-        "merchant_id": "MERCH123",
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
         "amount": 100.0,
-        "channel": "online",
-        "transaction_date": "2022-01-01",
-        "event_data": {}
+        "event_data": {"key": "value"},
+        "transaction_date": datetime.now(),
+        "channel": "web"
     }
-    response_data = {"status": "success"}
-    
-    with patch('agents.SCRUM-7_impl.AsyncClient') as mock_client:
-        mock_client.return_value.post = AsyncMock()
-        mock_client.return_value.post.return_value.json = AsyncMock(return_value=response_data)
-        
-        response = await test_client.post("/events", json=event_data)
-        assert response.status_code == 200
-        assert response.json() == response_data
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 200
+    assert "id" in response.json()
+    assert "status" in response.json()
+    assert "created_at" in response.json()
 
-@pytest.mark.asyncio
-async def test_create_event_error(test_client):
+def test_create_event_missing_data(test_client):
     event_data = {
-        "event_code": "TEST123",
-        "customer_id": "CUST123",
-        "transaction_id": "TRANS123",
-        "merchant_id": "MERCH123",
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
         "amount": 100.0,
-        "channel": "online",
-        "transaction_date": "2022-01-01",
-        "event_data": {}
+        "event_data": {"key": "value"},
+        "transaction_date": datetime.now(),
+        "channel": "web"
+    }
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 422
+
+def test_create_event_invalid_amount(test_client):
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": "invalid",
+        "event_data": {"key": "value"},
+        "transaction_date": datetime.now(),
+        "channel": "web"
+    }
+    response = test_client.post("/events", json=event_data)
+    assert response.status_code == 422
+
+def test_create_event_db_error(test_client, monkeypatch):
+    mock_uuid = MagicMock(return_value="mock_id")
+    monkeypatch.setattr("uuid.uuid4", mock_uuid)
+    
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "event_data": {"key": "value"},
+        "transaction_date": datetime.now(),
+        "channel": "web"
     }
     
-    with patch('agents.SCRUM-7_impl.AsyncClient') as mock_client:
-        mock_client.return_value.post = AsyncMock(side_effect=Exception("Mocked error"))
-        
-        response = await test_client.post("/events", json=event_data)
-        assert response.status_code == 500
+    with pytest.raises(Exception):
+        test_client.post("/events", json=event_data)
