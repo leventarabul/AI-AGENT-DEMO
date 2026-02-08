@@ -1,55 +1,26 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch
-from main import app
+from agents.SCRUM-7_impl import router, EventChannel
+
+client = TestClient(router)
 
 @pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
+def event_id():
+    return 1
 
-def test_create_event_success(client):
-    event_data = {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "101112",
-        "amount": 50.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
+def test_add_event_channel_success(event_id):
+    response = client.post(f"/events/{event_id}/channel", json={"channel": "test_channel"})
     assert response.status_code == 200
+    assert response.json() == {"channel": "test_channel"}
 
-@patch('main.httpx.AsyncClient')
-def test_create_event_api_error(mock_async_client, client):
-    mock_async_client.return_value.post.side_effect = Exception("API error")
-    event_data = {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "101112",
-        "amount": 50.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 500
+def test_add_event_channel_missing_channel_field(event_id):
+    response = client.post(f"/events/{event_id}/channel", json={})
+    assert response.status_code == 422
 
-@patch('main.httpx.AsyncClient')
-def test_create_event_connection_error(mock_async_client, client):
-    mock_async_client.return_value.post.side_effect = httpx.RequestError("Connection error")
-    event_data = {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "101112",
-        "amount": 50.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 500
+def test_add_event_channel_invalid_event_id():
+    response = client.post("/events/abc/channel", json={"channel": "test_channel"})
+    assert response.status_code == 422
+
+def test_add_event_channel_invalid_json_format(event_id):
+    response = client.post(f"/events/{event_id}/channel", json="invalid_json")
+    assert response.status_code == 422
