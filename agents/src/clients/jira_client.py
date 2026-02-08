@@ -1,6 +1,7 @@
 import base64
 import httpx
 import json
+import logging
 from typing import Optional, Dict, Any, List
 
 
@@ -13,6 +14,7 @@ class JiraClient:
         self.api_token = api_token
         self.timeout = timeout
         self._auth_header = self._build_auth_header()
+        self._logger = logging.getLogger(__name__)
     
     def _build_auth_header(self) -> Dict[str, str]:
         """Build Basic Auth header for Jira API."""
@@ -151,3 +153,23 @@ class JiraClient:
             resp.raise_for_status()
             result = resp.json()
             return result.get("transitions", [])
+
+    async def get_available_transitions(self, issue_key: str) -> List[Dict[str, Any]]:
+        """Return normalized transitions list: [{id, name, to_status}]."""
+        transitions = await self.get_transitions(issue_key)
+        normalized = []
+        for transition in transitions:
+            normalized.append(
+                {
+                    "id": transition.get("id"),
+                    "name": transition.get("name"),
+                    "to_status": (transition.get("to") or {}).get("name"),
+                }
+            )
+
+        self._logger.debug(
+            "Available transitions for %s: %s",
+            issue_key,
+            normalized,
+        )
+        return normalized

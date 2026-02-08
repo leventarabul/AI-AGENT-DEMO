@@ -45,25 +45,64 @@ async def _add_jira_comment(
     await jira_client.add_comment(issue_key, comment)
 
 
-async def _transition_issue_to_done(
-    jira_client: Any,
+async def _attempt_done_transition(
+    jira_client: JiraClient,
     issue_key: str,
     dry_run: bool,
-) -> bool:
-    """Attempt to transition issue to Done/Closed; return True if successful."""
-    target_names = ["Done", "Closed", "Complete", "Completed", "Resolved"]
-    transitions = await jira_client.get_transitions(issue_key)
-    for name in target_names:
-        for transition in transitions:
-            if transition.get("name") == name:
-                if dry_run:
-                    logger.info(
-                        "[DRY_RUN] Skipping transition for %s to %s", issue_key, name
-                    )
-                    return True
-                await jira_client.transition_issue(issue_key, transition_id=transition.get("id"))
-                return True
-    return False
+) -> None:
+    """Attempt dynamic Done/Closed/Resolved transition and comment appropriately."""
+    target_statuses = {"done", "closed", "resolved"}
+    transitions = await jira_client.get_available_transitions(issue_key)
+    match = None
+
+    for transition in transitions:
+        to_status = transition.get("to_status")
+        if to_status and to_status.lower() in target_statuses:
+            match = transition
+            break
+
+    if not match:
+        message = (
+            "⚠️ Tests passed but no suitable DONE transition was found. "
+            "Please transition manually."
+        )
+        if dry_run:
+            logger.info("[DRY_RUN] %s (issue_key=%s)", message, issue_key)
+            return
+        await _add_jira_comment(jira_client, issue_key, message, dry_run)
+        return
+
+    target_name = match.get("to_status") or match.get("name") or "Done"
+    if dry_run:
+        logger.info(
+            "[DRY_RUN] Would transition %s to %s using %s",
+            issue_key,
+            target_name,
+            match.get("id"),
+        )
+        return
+
+    try:
+        await jira_client.transition_issue(issue_key, transition_id=match.get("id"))
+        await _add_jira_comment(
+            jira_client,
+            issue_key,
+            f"✅ Task automatically transitioned to {target_name}",
+            dry_run,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to transition %s automatically: %s",
+            issue_key,
+            exc,
+            exc_info=True,
+        )
+        await _add_jira_comment(
+            jira_client,
+            issue_key,
+            f"❌ Automatic transition failed: {exc}",
+            dry_run,
+        )
 
 
 def _collect_code_files_from_repo(repo_root: str) -> List[Tuple[str, str]]:
@@ -240,15 +279,7 @@ async def run_mvp_jira_flow(
 
     completed = testing_success
     if completed:
-        transitioned = await _transition_issue_to_done(jira_client, issue_key, dry_run)
-        if not transitioned:
-            await _add_jira_comment(
-                jira_client,
-                issue_key,
-                "manual transition needed: no Done/Closed transition found. "
-                "Please transition the issue manually in Jira.",
-                dry_run,
-            )
+        await _attempt_done_transition(jira_client, issue_key, dry_run)
 
     return {
         "issue_key": issue_key,
