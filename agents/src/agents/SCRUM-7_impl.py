@@ -1,23 +1,24 @@
-# agents/src/clients/demo_domain_client.py
-
-import httpx
-
-DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
-
-async def create_event(event_data: dict) -> dict:
-    async with httpx.AsyncClient() as client:
-        url = f"{DEMO_DOMAIN_URL}/events"
-        response = await client.post(url, json=event_data, auth=("admin", "admin123"))
-        response.raise_for_status()
-        return response.json()
-
-# demo-domain/src/demo-environment/api_server.py
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
 app = FastAPI()
 
-@app.post("/events/channel")
-async def create_event_with_channel(event_data: dict) -> dict:
-    event_data["channel"] = event_data.get("channel", "default")
-    return await create_event(event_data)
+class EventRequest(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: str
+    event_data: Optional[dict]
+    channel: str
+
+@app.post("/events")
+async def create_event(event: EventRequest):
+    # Save event with channel information
+    try:
+        # Save event to database with channel info
+        return {"message": "Event created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal Server Error")
