@@ -1,39 +1,40 @@
-# test_demo_domain_client.py
-
 import pytest
-from httpx import AsyncClient
-from unittest.mock import patch
-from clients.demo_domain_client import create_event
+from httpx import Response
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def event_data():
-    return {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "101112",
-        "amount": 50.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {}
-    }
+def mock_httpx_response():
+    return AsyncMock(Response)
 
 @pytest.mark.asyncio
-async def test_create_event_success(event_data):
-    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
-        mock_client.return_value.post.return_value.json.return_value = {"status": "success"}
-        response = await create_event(event_data)
-        assert response == {"status": "success"}
+async def test_register_event_successful(mock_httpx_response):
+    mock_httpx_response.return_value.json.return_value = {"event_id": 1}
+    
+    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
+        result = await register_event({"name": "event1"})
+        
+    assert result == {"event_id": 1}
 
 @pytest.mark.asyncio
-async def test_create_event_add_channel(event_data):
-    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
-        mock_client.return_value.post.return_value.json.return_value = {"status": "success"}
-        response = await create_event(event_data)
-        assert response["event_data"]["channel"] == "web"
+async def test_register_event_unauthorized(mock_httpx_response):
+    mock_httpx_response.return_value.status_code = 401
+    
+    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
+        with pytest.raises(httpx.HTTPStatusError):
+            await register_event({"name": "event1"})
 
 @pytest.mark.asyncio
-async def test_create_event_error(event_data):
-    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
-        mock_client.return_value.post.side_effect = Exception("Connection error")
-        with pytest.raises(Exception):
-            await create_event(event_data)
+async def test_register_event_server_error(mock_httpx_response):
+    mock_httpx_response.return_value.status_code = 500
+    
+    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
+        with pytest.raises(httpx.HTTPStatusError):
+            await register_event({"name": "event1"})
+
+@pytest.mark.asyncio
+async def test_register_event_timeout(mock_httpx_response):
+    mock_httpx_response.side_effect = httpx.ReadTimeout
+    
+    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
+        with pytest.raises(httpx.ReadTimeout):
+            await register_event({"name": "event1"})
