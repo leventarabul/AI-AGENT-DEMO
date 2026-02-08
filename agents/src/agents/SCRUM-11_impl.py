@@ -15,9 +15,20 @@ class EventData(BaseModel):
     city: Optional[str] = None
     gender: Optional[str] = None
 
-@app.post("/events/")
-async def create_event(event_data: EventData, background_tasks: BackgroundTasks):
-    # Your code to create an event with gender information
+@app.post("/register_event", response_model=EventResponse)
+async def register_event(event_data: EventData, x_token: str = Header(...)):
+    """Register a new event"""
+    try:
+        # Check authentication
+        validate_token(x_token)
+        
+        # Save event to database
+        event = await save_event_to_db(event_data)
+        
+        return event
+    except Exception as e:
+        logging.error(f"Error registering event: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 ### FILE: demo-domain/src/demo-environment/job_processor.py
 def process_single_event(self, event: dict) -> bool:
@@ -38,28 +49,24 @@ def process_single_event(self, event: dict) -> bool:
             SELECT cr.*, c.id as campaign_id
             FROM campaign_rules cr
             JOIN campaigns c ON cr.campaign_id = c.id
-            WHERE cr.is_active = true
-            AND c.status = 'active'
+            WHERE cr.is_active = true AND c.status = 'active'
             ORDER BY cr.rule_priority DESC
         """)
         
         rules = cur.fetchall()
-        cur.close()
-        
-        if not rules:
-            return False
         
         for rule in rules:
-            rule_condition = rule['rule_condition']
-            if 'gender' in rule_condition:
-                if event.get('gender') != rule_condition['gender']:
-                    continue
-            if self.match_rule(rule_condition, event):
-                # Process the event based on the matched rule
+            if match_rule(rule['rule_condition'], event):
+                # Gender check
+                if 'gender' in event and event['gender'] == 'male':
+                    return False
+                
+                # Process rule and update earnings
+                process_rule_and_earnings(event, rule)
                 return True
         
         return False
     
     except Exception as e:
-        logger.error(f"Error processing event: {e}")
+        logging.error(f"Error processing event: {e}")
         return False
