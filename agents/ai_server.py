@@ -332,7 +332,14 @@ async def _run_tests_in_background(issue_key: str, test_files: List[str] = None)
 
         repo_root = os.getenv("GIT_REPO_PATH", ".")
         agent = TestingAgent(repo_root=repo_root)
-        result = agent.execute({"test_files": test_files, "test_path": "tests/"})
+        result = agent.execute(
+            {
+                "qa_mode": True,
+                "issue_key": issue_key,
+                "test_files": test_files,
+                "test_path": "tests/",
+            }
+        )
         logger.info(f"✅ Testing for {issue_key} completed:\n{result}")
 
         jira_url = os.getenv("JIRA_URL")
@@ -342,21 +349,19 @@ async def _run_tests_in_background(issue_key: str, test_files: List[str] = None)
             jira_client = JiraClient(jira_url, jira_username, jira_token)
             summary = getattr(result, "summary", "")
             if result.status == TestStatus.PASS:
-                await jira_client.add_comment(issue_key, f"✅ Tests passed: {summary}")
+                await jira_client.add_comment(
+                    issue_key,
+                    _format_testing_comment("✅", result, summary),
+                )
                 await _transition_issue_to_status(
                     jira_client,
                     issue_key,
                     ["Done", "Completed", "Resolved"],
                 )
             else:
-                raw = (getattr(result, "raw_output", "") or "").strip()
-                raw_tail = "\n".join(raw.splitlines()[-40:]) if raw else summary
-                err = (getattr(result, "error", "") or "").strip()
-                if err:
-                    raw_tail = f"Error: {err}\n" + raw_tail
                 await jira_client.add_comment(
                     issue_key,
-                    f"❌ Tests failed: {summary}\nTest output (tail):\n{raw_tail}",
+                    _format_testing_comment("❌", result, summary),
                 )
                 await _transition_issue_to_status(
                     jira_client,
@@ -365,6 +370,34 @@ async def _run_tests_in_background(issue_key: str, test_files: List[str] = None)
                 )
     except Exception as e:
         logger.info(f"❌ Error running tests for {issue_key}: {e}")
+
+
+def _format_testing_comment(prefix: str, result: Any, summary: str) -> str:
+    cases = getattr(result, "case_results", []) or []
+    lines = [f"{prefix} Tests result: {summary}"]
+
+    if cases:
+        lines.append("Test Cases:")
+        for case in cases:
+            status = getattr(case, "status", "")
+            name = getattr(case, "name", "")
+            detail = getattr(case, "details", "")
+            if detail:
+                lines.append(f"- {status}: {name} ({detail})")
+            else:
+                lines.append(f"- {status}: {name}")
+
+    err = (getattr(result, "error", "") or "").strip()
+    if err:
+        lines.append(f"Error: {err}")
+
+    raw = (getattr(result, "raw_output", "") or "").strip()
+    if raw:
+        raw_tail = "\n".join(raw.splitlines()[-40:])
+        lines.append("Test output (tail):")
+        lines.append(raw_tail)
+
+    return "\n".join(lines)
 
 
 class TestingWebhookRequest(BaseModel):
