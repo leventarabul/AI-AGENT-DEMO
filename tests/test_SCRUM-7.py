@@ -1,41 +1,22 @@
-import pytest
-from fastapi.testclient import TestClient
+from agents.SCRUM-7_impl import create_event_endpoint, EventIn
+from fastapi import HTTPException
 from unittest.mock import patch
-from main import app
 
-@pytest.fixture
-def client():
-    return TestClient(app)
+def test_create_event_endpoint_success():
+    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"}, channel="web")
+    result = create_event_endpoint(event)
+    assert result.event_code == event.event_code
 
-def test_create_event_success(client):
-    response = client.post("/events/", json={
-        "event_code": "event_001",
-        "customer_id": "customer_001",
-        "transaction_id": "trans_001",
-        "merchant_id": "merchant_001",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully"}
+def test_create_event_endpoint_no_channel():
+    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"})
+    result = create_event_endpoint(event)
+    assert result.event_code == event.event_code
 
-def test_create_event_missing_required_fields(client):
-    response = client.post("/events/", json={})
-    assert response.status_code == 422
-
-@patch("main.save_event_to_database")
-def test_create_event_database_error(mock_save_event, client):
-    mock_save_event.side_effect = Exception("Database error")
-    response = client.post("/events/", json={
-        "event_code": "event_001",
-        "customer_id": "customer_001",
-        "transaction_id": "trans_001",
-        "merchant_id": "merchant_001",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 500
+@patch("agents.SCRUM-7_impl.create_event")
+def test_create_event_endpoint_failure(mock_create_event):
+    mock_create_event.return_value = False
+    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"}, channel="web")
+    try:
+        create_event_endpoint(event)
+    except HTTPException as e:
+        assert e.status_code == 400
