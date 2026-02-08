@@ -8,7 +8,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 import asyncio
 import os
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Optional
 import httpx
 import logging
 import subprocess
@@ -410,6 +410,8 @@ class AgentScheduler:
                     issue_key,
                     self._format_testing_comment("✅", result),
                 )
+                self._push_current_branch()
+                await self._post_done_commit_info(jira_client, issue_key)
                 await self._transition_issue_to_status(
                     jira_client,
                     issue_key,
@@ -456,6 +458,75 @@ class AgentScheduler:
             lines.append(raw_tail)
 
         return "\n".join(lines)
+
+    def _push_current_branch(self) -> None:
+        if not os.path.exists(os.path.join(self.git_repo_path, ".git")):
+            return
+
+        token = os.getenv("GITHUB_TOKEN") or os.getenv("GIT_TOKEN")
+        repo_url = os.getenv("GITHUB_REPO_URL") or os.getenv("GIT_REMOTE_URL")
+        if token and repo_url and repo_url.startswith("https://"):
+            auth_url = repo_url.replace(
+                "https://",
+                f"https://x-access-token:{token}@",
+                1,
+            )
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", auth_url],
+                cwd=self.git_repo_path,
+                check=False,
+                env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+            )
+
+        subprocess.run(
+            ["git", "push"],
+            cwd=self.git_repo_path,
+            check=False,
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+        )
+
+    def _get_current_commit_sha(self) -> Optional[str]:
+        if not os.path.exists(os.path.join(self.git_repo_path, ".git")):
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.git_repo_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+        )
+        sha = (result.stdout or "").strip()
+        return sha or None
+
+    def _build_commit_url(self, sha: Optional[str]) -> Optional[str]:
+        if not sha:
+            return None
+        repo_url = os.getenv("GITHUB_REPO_URL") or os.getenv("GIT_REMOTE_URL")
+        if not repo_url:
+            return None
+        if repo_url.startswith("https://x-access-token:"):
+            repo_url = "https://" + repo_url.split("@", 1)[-1]
+        if repo_url.endswith(".git"):
+            repo_url = repo_url[:-4]
+        return f"{repo_url}/commit/{sha}"
+
+    async def _post_done_commit_info(self, jira_client: Any, issue_key: str) -> None:
+        sha = self._get_current_commit_sha()
+        short_sha = sha[:7] if sha else "unknown"
+        commit_url = self._build_commit_url(sha)
+        repo_url = os.getenv("GITHUB_REPO_URL") or os.getenv("GIT_REMOTE_URL")
+        if repo_url and repo_url.startswith("https://x-access-token:"):
+            repo_url = "https://" + repo_url.split("@", 1)[-1]
+        lines = ["✅ Done: code pushed"]
+        lines.append(f"- Commit: {short_sha}")
+        if commit_url:
+            lines.append(f"- Commit link: {commit_url}")
+        if repo_url:
+            if repo_url.endswith(".git"):
+                repo_url = repo_url[:-4]
+            lines.append(f"- Repo: {repo_url}")
+        await jira_client.add_comment(issue_key, "\n".join(lines))
 
     async def _update_retry_label(self, jira_client: Any, issue_key: str, increment: bool) -> int:
         try:

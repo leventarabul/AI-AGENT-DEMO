@@ -48,6 +48,8 @@ class EventData(BaseModel):
     transaction_date: str
     event_data: Optional[Dict[str, Any]] = None
     provision_code: Optional[str] = None
+    city: Optional[str] = None
+    gender: Optional[str] = None
 
 
 class EventResponse(BaseModel):
@@ -74,6 +76,7 @@ class CampaignRuleCreate(BaseModel):
     """Campaign rule creation model"""
     rule_name: str
     rule_condition: Dict[str, Any]
+    gender: Optional[str] = None
     reward_amount: float
     rule_priority: int = 1
 
@@ -295,8 +298,8 @@ async def create_event(event: EventData, background_tasks: BackgroundTasks, auth
         cur.execute("""
             INSERT INTO events 
             (event_code, customer_id, transaction_id, merchant_id, amount, 
-             transaction_date, provision_code, event_data, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             transaction_date, provision_code, city, gender, event_data, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, event_code, customer_id, transaction_id, amount, status, created_at, recorded_at
         """, (
             event.event_code,
@@ -306,6 +309,8 @@ async def create_event(event: EventData, background_tasks: BackgroundTasks, auth
             event.amount,
             event.transaction_date,
             event.provision_code,
+            event.city,
+            event.gender,
             json.dumps(event.event_data) if event.event_data else json.dumps({}),
             'pending'
         ))
@@ -408,10 +413,17 @@ async def create_campaign_rule(campaign_id: int, rule: CampaignRuleCreate, autho
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
         cur.execute("""
-            INSERT INTO campaign_rules (campaign_id, rule_name, rule_condition, reward_amount, rule_priority)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO campaign_rules (campaign_id, rule_name, rule_condition, gender, reward_amount, rule_priority)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING *
-        """, (campaign_id, rule.rule_name, json.dumps(rule.rule_condition), rule.reward_amount, rule.rule_priority))
+        """, (
+            campaign_id,
+            rule.rule_name,
+            json.dumps(rule.rule_condition),
+            rule.gender,
+            rule.reward_amount,
+            rule.rule_priority,
+        ))
         
         result = cur.fetchone()
         conn.commit()
@@ -446,7 +458,7 @@ def process_event(event_id: int):
         # Get event with all details
         cur.execute("""
             SELECT id, event_code, customer_id, merchant_id, amount, 
-                   transaction_id, transaction_date, event_data
+                   transaction_id, transaction_date, event_data, gender
             FROM events WHERE id = %s
         """, (event_id,))
         event = cur.fetchone()
@@ -479,11 +491,15 @@ def process_event(event_id: int):
             'merchant_id': event['merchant_id'],
             'amount': float(event['amount']),
             'transaction_id': event['transaction_id'],
-            'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None
+            'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None,
+            'gender': event.get('gender'),
         })
         
         # Check rules against event data
         for rule in rules:
+            rule_gender = rule.get('gender')
+            if rule_gender and event_data.get('gender') != rule_gender:
+                continue
             if match_rule(rule['rule_condition'], event_data):
                 matched_rule = rule
                 break
@@ -559,7 +575,7 @@ def process_events_job(triggered_by: str = 'scheduler'):
         # Get all pending events
         cur.execute("""
             SELECT id, event_code, customer_id, merchant_id, amount, 
-                   transaction_id, transaction_date, event_data
+                   transaction_id, transaction_date, event_data, gender
             FROM events WHERE status = 'pending'
             ORDER BY created_at ASC
         """)
@@ -593,11 +609,15 @@ def process_events_job(triggered_by: str = 'scheduler'):
                     'merchant_id': event['merchant_id'],
                     'amount': float(event['amount']),
                     'transaction_id': event['transaction_id'],
-                    'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None
+                    'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None,
+                    'gender': event.get('gender'),
                 })
                 
                 # Check rules
                 for rule in rules:
+                    rule_gender = rule.get('gender')
+                    if rule_gender and event_data.get('gender') != rule_gender:
+                        continue
                     if match_rule(rule['rule_condition'], event_data):
                         matched_rule = rule
                         break

@@ -11,6 +11,7 @@ import subprocess
 import os
 import re
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 import httpx
@@ -272,6 +273,15 @@ class TestingAgent:
                     TestFailure(test_name=name, error_message=details or "Failed")
                 )
 
+        def compact_json(data: Any, limit: int = 600) -> str:
+            try:
+                text = json.dumps(data, ensure_ascii=False)
+            except Exception:
+                text = str(data)
+            if len(text) > limit:
+                return text[:limit] + "..."
+            return text
+
         try:
             with httpx.Client(timeout=30, auth=auth) as client:
                 # Case 1: Health check
@@ -279,7 +289,7 @@ class TestingAgent:
                 record_case(
                     "health_check",
                     resp.status_code == 200,
-                    f"status={resp.status_code}",
+                    f"status={resp.status_code}, response={compact_json(resp.json())}",
                 )
 
                 # Case 2: Create campaign
@@ -291,24 +301,34 @@ class TestingAgent:
                 if resp.status_code == 200:
                     campaign = resp.json()
                     campaign_id = campaign.get("id")
-                    record_case("create_campaign", True, f"id={campaign_id}")
+                    details = (
+                        f"request={compact_json(campaign_payload)}, "
+                        f"response={compact_json(campaign)}"
+                    )
+                    record_case("create_campaign", True, details)
                 else:
                     campaign_id = None
                     record_case(
                         "create_campaign",
                         False,
-                        f"status={resp.status_code}",
+                        f"status={resp.status_code}, response={resp.text[:300]}",
                     )
 
                 # Case 3: Create rule
                 rule_id = None
                 if campaign_id:
+                    rule_condition = {
+                        "merchant_id": "QA_MERCHANT",
+                        "event_code": "QA_EVENT",
+                    }
+                    # Add task-specific conditions
+                    if issue_key and "SCRUM-9" in issue_key:
+                        rule_condition["city"] = "Istanbul"
+                    if issue_key and "SCRUM-10" in issue_key:
+                        rule_condition["city"] = "Ankara"
                     rule_payload = {
                         "rule_name": "QA Rule",
-                        "rule_condition": {
-                            "merchant_id": "QA_MERCHANT",
-                            "event_code": "QA_EVENT",
-                        },
+                        "rule_condition": rule_condition,
                         "reward_amount": 10.0,
                         "rule_priority": 1,
                     }
@@ -319,40 +339,56 @@ class TestingAgent:
                     if resp.status_code == 200:
                         rule = resp.json()
                         rule_id = rule.get("id")
-                        record_case("create_rule", True, f"id={rule_id}")
+                        details = (
+                            f"request={compact_json(rule_payload)}, "
+                            f"response={compact_json(rule)}"
+                        )
+                        record_case("create_rule", True, details)
                     else:
                         record_case(
                             "create_rule",
                             False,
-                            f"status={resp.status_code}",
+                            f"status={resp.status_code}, response={resp.text[:300]}",
                         )
                 else:
                     record_case("create_rule", False, "campaign missing")
 
-                # Case 4: Register event (with channel for SCRUM-7)
+                # Case 4: Register event (with task-specific fields)
                 event_payload = {
                     "event_code": "QA_EVENT",
                     "customer_id": "QA_CUSTOMER",
                     "transaction_id": f"qa-{int(time.time())}",
                     "merchant_id": "QA_MERCHANT",
                     "amount": 50.0,
-                    "transaction_date": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "transaction_date": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
                     "event_data": {"source": "qa"},
                 }
-                if issue_key and "SCRUM-7" in issue_key:
-                    event_payload["channel"] = "web"
+                # Add task-specific fields
+                if issue_key:
+                    if "SCRUM-7" in issue_key:
+                        event_payload["channel"] = "web"
+                    if "SCRUM-9" in issue_key:
+                        event_payload["city"] = "Istanbul"
+                    if "SCRUM-10" in issue_key:
+                        event_payload["city"] = "Ankara"
 
                 resp = client.post(f"{base_url}/events", json=event_payload)
                 if resp.status_code == 200:
                     event = resp.json()
                     event_id = event.get("id")
-                    record_case("register_event", True, f"id={event_id}")
+                    details = (
+                        f"request={compact_json(event_payload)}, "
+                        f"response={compact_json(event)}"
+                    )
+                    record_case("register_event", True, details)
                 else:
                     event_id = None
                     record_case(
                         "register_event",
                         False,
-                        f"status={resp.status_code}",
+                        f"status={resp.status_code}, response={resp.text[:300]}",
                     )
 
                 # Case 5: Trigger processing job
@@ -360,26 +396,31 @@ class TestingAgent:
                 record_case(
                     "trigger_job",
                     resp.status_code == 200,
-                    f"status={resp.status_code}",
+                    f"status={resp.status_code}, response={resp.text[:300]}",
                 )
 
                 # Case 6: Verify event status
                 if event_id:
                     status = None
                     matched_rule = None
+                    event_snapshot: Dict[str, Any] = {}
                     for _ in range(5):
                         time.sleep(1)
                         resp = client.get(f"{base_url}/events/{event_id}")
                         if resp.status_code != 200:
                             continue
                         event = resp.json()
+                        event_snapshot = event
                         status = event.get("status")
                         matched_rule = event.get("matched_rule_id")
                         if status in ("processed", "skipped", "failed"):
                             break
 
                     ok = status in ("processed", "skipped", "failed")
-                    details = f"status={status}, matched_rule={matched_rule}"
+                    details = (
+                        f"status={status}, matched_rule={matched_rule}, "
+                        f"event={compact_json(event_snapshot)}"
+                    )
                     record_case("verify_event", ok, details)
                 else:
                     record_case("verify_event", False, "event missing")

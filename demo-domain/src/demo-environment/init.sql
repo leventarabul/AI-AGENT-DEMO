@@ -35,6 +35,7 @@ CREATE TABLE events (
     amount DECIMAL(12, 2) NOT NULL,
     transaction_date TIMESTAMP NOT NULL,
     provision_code VARCHAR(255),
+    city VARCHAR(100),
     event_data JSONB,
     status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'failed', 'skipped')),
     matched_rule_id INTEGER REFERENCES campaign_rules(id),
@@ -63,6 +64,7 @@ CREATE TABLE earnings (
 CREATE INDEX idx_events_customer_id ON events(customer_id);
 CREATE INDEX idx_events_status ON events(status);
 CREATE INDEX idx_events_created_at ON events(created_at);
+CREATE INDEX idx_events_city ON events(city);
 CREATE INDEX idx_campaign_rules_campaign_id ON campaign_rules(campaign_id);
 CREATE INDEX idx_campaign_rules_active ON campaign_rules(is_active);
 CREATE INDEX idx_earnings_customer_id ON earnings(customer_id);

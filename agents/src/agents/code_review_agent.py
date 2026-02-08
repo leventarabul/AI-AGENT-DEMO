@@ -61,6 +61,10 @@ def format_review_comment(result: CodeReviewResult) -> str:
         by_file.setdefault(key, []).append(issue)
 
     lines = [header]
+    lines.append("**Checks:**")
+    lines.append("- Architecture: no print(), no hardcoded paths")
+    lines.append("- Standards: line length, bare except, wildcard imports")
+    lines.append("- Edge cases: direct list indexing")
     if reasoning:
         lines.append(f"**Reasoning:** {reasoning}")
 

@@ -52,7 +52,7 @@ class EventProcessor:
             # Get pending events with transaction details
             cur.execute("""
                 SELECT id, event_code, customer_id, merchant_id, amount, 
-                       transaction_id, transaction_date, event_data
+                       transaction_id, transaction_date, event_data, city
                 FROM events
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -115,7 +115,8 @@ class EventProcessor:
                 'merchant_id': event['merchant_id'],
                 'amount': float(event['amount']),
                 'transaction_id': event['transaction_id'],
-                'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None
+                'transaction_date': event['transaction_date'].isoformat() if event['transaction_date'] else None,
+                'city': event.get('city'),
             })
             
             # Try to match against rules

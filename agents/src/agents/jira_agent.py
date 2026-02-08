@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import subprocess
 import tempfile
 import httpx
@@ -77,11 +78,46 @@ class JiraAgent:
         desc_preview = task_description[:100] + ("..." if len(task_description) > 100 else "")
         logger.info(f"  Description: {desc_preview}")
         
-        # Step 1: Generate code
+        # Step 1: Generate code (multi-file aware)
         code_result = await self.generate_code(
             task_title, task_description, task_labels
         )
         generated_code = code_result.get("code", "")
+        parsed_files = code_result.get("parsed_files")
+
+        if self._is_demo_domain_task(task_title, task_description, task_labels):
+            if not parsed_files:
+                await self.jira_client.add_comment(
+                    issue_key,
+                    "❌ Code generation missing demo-domain files. "
+                    "Please retry; expected changes under demo-domain/.",
+                )
+                await self._transition_to_status(
+                    issue_key,
+                    target_names=["Waiting Development", "In Development", "To Do"],
+                )
+                return {
+                    "issue_key": issue_key,
+                    "status": "missing_demo_domain_files",
+                }
+            has_demo_domain = any(
+                path.startswith("demo-domain/")
+                for path in parsed_files.keys()
+            )
+            if not has_demo_domain:
+                await self.jira_client.add_comment(
+                    issue_key,
+                    "❌ Code generation did not modify demo-domain/. "
+                    "Task requires demo-domain changes.",
+                )
+                await self._transition_to_status(
+                    issue_key,
+                    target_names=["Waiting Development", "In Development", "To Do"],
+                )
+                return {
+                    "issue_key": issue_key,
+                    "status": "missing_demo_domain_files",
+                }
         
         # Step 2: Generate tests
         tests_result = await self.generate_tests(
@@ -89,21 +125,32 @@ class JiraAgent:
         )
         generated_tests = tests_result.get("tests", "")
 
+        # Post initial development summary BEFORE code review
+        await self.jira_client.add_comment(
+            issue_key,
+            "## 🛠 Development Started\n"
+            f"**Task:** {task_title}\n"
+            "**Status:** Code generated, preparing review\n",
+        )
+
         # Step 2.5: Code review + auto-fix loop BEFORE git commit
-        code_changes = self._build_code_changes(issue_key, generated_code, generated_tests)
+        code_changes = self._build_code_changes(
+            issue_key, generated_code, generated_tests,
+            parsed_files=parsed_files,
+        )
+        # Write files to disk before review to ensure dev-first flow
+        self._write_code_changes_to_disk(code_changes)
         review_result, code_changes = await self._run_code_review_with_retries(
             issue_key,
             code_changes,
             max_attempts=2,
         )
-        generated_code = code_changes.get(
-            f"agents/src/agents/{issue_key}_impl.py",
-            generated_code,
-        )
-        generated_tests = code_changes.get(
-            f"tests/test_{issue_key}.py",
-            generated_tests,
-        )
+        # Update generated_code from review fixes
+        for fpath, content in code_changes.items():
+            if fpath.endswith("_impl.py"):
+                generated_code = content
+            elif fpath.endswith(f"test_{issue_key}.py"):
+                generated_tests = content
 
         if review_result.decision != ReviewDecision.APPROVE:
             await self.jira_client.add_comment(
@@ -124,6 +171,11 @@ class JiraAgent:
                 "status": "review_failed",
                 "review_decision": review_result.decision.value,
             }
+
+        await self.jira_client.add_comment(
+            issue_key,
+            "✅ " + format_review_comment(review_result),
+        )
         
         # Step 3: Commit and push
         branch_name = self._create_branch_name(issue_key, task_title)
@@ -144,11 +196,14 @@ class JiraAgent:
         await self._trigger_deploy(issue_key, branch_name, commit_sha)
         
         # Step 5: Post development details as comment
+        changed_files = list(code_changes.keys())
         await self._post_development_summary(
-            issue_key, task_title, generated_code, generated_tests, pr_info
+            issue_key, task_title, generated_code,
+            generated_tests, pr_info, changed_files
         )
         await self._post_development_details(
-            issue_key, task_title, generated_code, generated_tests, pr_info
+            issue_key, task_title, generated_code,
+            generated_tests, pr_info, changed_files
         )
 
         # Step 5.5: Run tests and update Jira status
@@ -156,6 +211,8 @@ class JiraAgent:
         await self._post_testing_result(issue_key, test_result)
         if test_result.status == TestStatus.PASS:
             await self._clear_retry_label(issue_key, task_labels)
+            self._push_current_branch()
+            await self._post_done_commit_info(issue_key)
             await self._transition_to_status(
                 issue_key,
                 target_names=["Done", "Completed", "Resolved"],
@@ -165,32 +222,6 @@ class JiraAgent:
                 issue_key,
                 target_names=["Waiting Development", "In Development", "To Do"],
             )
-        
-        # Step 6: Update Jira task status (only if we actually produced a PR in a git repo)
-        can_post_success = (
-            self._is_git_repo() and pr_info.get("html_url") not in (None, "N/A")
-        )
-        if can_post_success:
-            pr_url = pr_info.get("html_url", "N/A")
-            await self.jira_client.add_comment(
-                issue_key,
-                (
-                    "✅ AI Agent completed development:\n"
-                    "- Code generated and tested\n"
-                    f"- PR created: {pr_url}\n"
-                    "- Ready for code review"
-                ),
-            )
-        else:
-            logger.info(
-                "  ⚠️ Success comment skipped: missing git repo or PR info"
-            )
-        
-        # Move issue to Code Review (fallback to In Review if not available)
-        await self._transition_to_status(
-            issue_key,
-            target_names=["Code Review", "In Review", "Review"],
-        )
         
         return {
             "issue_key": issue_key,
@@ -260,8 +291,9 @@ class JiraAgent:
         response = await self.ai_client.generate(
             prompt=code_prompt,
             provider="openai",
-            max_tokens=2000,
-            temperature=0.7,
+            max_tokens=1200,
+            temperature=0.4,
+            use_cache=False,
         )
         
         generated_text = response.get("text", "")
@@ -272,25 +304,36 @@ class JiraAgent:
     async def generate_tests(
         self, task_title: str, code: str
     ) -> Dict[str, str]:
-        """Use AI to generate unit tests for the code."""
+        """Use AI to generate integration tests for the task."""
         logger.info(f"  🧪 Generating tests...")
         
         test_prompt = (
             f"Task: {task_title}\n\n"
             "Code:\n```python\n" + code + "\n```\n\n"
-            "Write comprehensive pytest unit tests for the code above.\n"
+            "Write comprehensive integration tests that test "
+            "the ACTUAL demo-domain API at "
+            "http://demo-domain-api:8000.\n\n"
             "IMPORTANT:\n"
-            "1. Use pytest fixtures and mocks where appropriate\n"
-            "2. Test happy paths, edge cases, and errors\n"
-            "3. Output ONLY the test code, no explanations\n"
-            "4. Start with ```python and end with ```\n"
+            "1. Use httpx or requests to call real API endpoints\n"
+            "2. Use HTTP Basic Auth: admin/admin123\n"
+            "3. Test the full flow: create campaign, add rule, "
+            "send event, verify processing and earnings\n"
+            "4. Use pytest fixtures for setup/teardown\n"
+            "5. Output ONLY the test code\n"
+            "6. Start with ```python and end with ```\n"
+            "7. Include assertions on response status codes "
+            "and response body content\n"
+            "8. Each test should be independent and idempotent\n"
+            "9. Use unique transaction_ids (uuid) to avoid "
+            "conflicts\n"
         )
         
         response = await self.ai_client.generate(
             prompt=test_prompt,
             provider="openai",
-            max_tokens=1500,
-            temperature=0.7,
+            max_tokens=1200,
+            temperature=0.4,
+            use_cache=False,
         )
         
         generated_text = response.get("text", "")
@@ -388,6 +431,48 @@ class JiraAgent:
 
         self._run_git(["checkout", "-b", branch_name], check=True)
 
+    def _push_current_branch(self) -> None:
+        """Push current branch to origin if git repo is available."""
+        if not self._is_git_repo():
+            return
+        self._configure_auth_remote()
+        self._run_git(["push"], check=False)
+
+    def _get_current_commit_sha(self) -> Optional[str]:
+        if not self._is_git_repo():
+            return None
+        result = self._run_git(["rev-parse", "HEAD"], capture_output=True, check=False)
+        sha = (result.stdout or "").strip()
+        return sha or None
+
+    def _sanitize_repo_url(self, repo_url: Optional[str]) -> Optional[str]:
+        if not repo_url:
+            return None
+        if repo_url.startswith("https://x-access-token:"):
+            return "https://" + repo_url.split("@", 1)[-1]
+        return repo_url
+
+    def _build_commit_url(self, sha: Optional[str]) -> Optional[str]:
+        if not sha:
+            return None
+        owner, name = self._parse_github_repo()
+        if not owner or not name:
+            return None
+        return f"https://github.com/{owner}/{name}/commit/{sha}"
+
+    async def _post_done_commit_info(self, issue_key: str) -> None:
+        sha = self._get_current_commit_sha()
+        short_sha = sha[:7] if sha else "unknown"
+        commit_url = self._build_commit_url(sha)
+        repo_url = self._sanitize_repo_url(os.getenv("GITHUB_REPO_URL"))
+        lines = ["✅ Done: code pushed"]
+        lines.append(f"- Commit: {short_sha}")
+        if commit_url:
+            lines.append(f"- Commit link: {commit_url}")
+        if repo_url:
+            lines.append(f"- Repo: {repo_url}")
+        await self.jira_client.add_comment(issue_key, "\n".join(lines))
+
     async def _trigger_deploy(self, issue_key: str, branch_name: str, commit_sha: str) -> None:
         """Trigger deployment webhook if configured."""
         deploy_url = os.getenv("DEPLOY_WEBHOOK_URL")
@@ -475,12 +560,42 @@ class JiraAgent:
             end = text.find("```", start)
             if end > start:
                 return text[start:end].strip()
+        elif "```sql" in text:
+            start = text.find("```sql") + len("```sql")
+            end = text.find("```", start)
+            if end > start:
+                return text[start:end].strip()
         elif "```" in text:
             start = text.find("```") + 3
             end = text.find("```", start)
             if end > start:
                 return text[start:end].strip()
         return text.strip()
+
+    def _parse_multi_file_response(
+        self, text: str
+    ) -> Optional[Dict[str, str]]:
+        """Parse LLM response with multiple ### FILE: blocks.
+
+        Returns {filepath: content} dict or None if no blocks found.
+        """
+        pattern = r'(?:###\s*)?FILE:\s*(.+?)[\s]*\n'
+        parts = re.split(pattern, text)
+        if len(parts) < 3:
+            return None
+
+        files: Dict[str, str] = {}
+        # parts: [preamble, path1, body1, path2, body2, ...]
+        for i in range(1, len(parts), 2):
+            filepath = parts[i].strip()
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+            content = self._extract_code_block(body)
+            if not content:
+                content = body.strip()
+            if filepath and content:
+                files[filepath] = content
+
+        return files if files else None
     
     def _extract_text_from_rich_text(self, rich_text: Dict[str, Any]) -> str:
         """Extract plain text from Jira rich text format."""
@@ -530,11 +645,40 @@ class JiraAgent:
         title_slug = task_title.lower().replace(" ", "-")[:30]
         return f"feat/{issue_key}/{title_slug}".lower()
 
-    def _build_code_changes(self, issue_key: str, code: str, tests: str) -> Dict[str, str]:
-        return {
-            f"agents/src/agents/{issue_key}_impl.py": code,
-            f"tests/test_{issue_key}.py": tests,
-        }
+    def _build_code_changes(
+        self,
+        issue_key: str,
+        code: str,
+        tests: str,
+        parsed_files: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Build code changes dict from parsed multi-file or fallback."""
+        changes: Dict[str, str] = {}
+        if parsed_files:
+            changes.update(parsed_files)
+        else:
+            # Fallback: single impl file (legacy behavior)
+            changes[f"agents/src/agents/{issue_key}_impl.py"] = code
+        changes[f"tests/test_{issue_key}.py"] = tests
+        return changes
+
+    def _is_demo_domain_task(
+        self,
+        task_title: str,
+        task_description: str,
+        task_labels: List[str],
+    ) -> bool:
+        text = f"{task_title} {task_description}".lower()
+        label_text = " ".join(task_labels or []).lower()
+        keywords = [
+            "demo-domain",
+            "campaign",
+            "campaign_rule",
+            "kampanya",
+            "event",
+            "events",
+        ]
+        return any(k in text or k in label_text for k in keywords)
 
     async def _run_code_review_with_retries(
         self,
@@ -683,17 +827,24 @@ class JiraAgent:
         code: str,
         tests: str,
         pr_info: Dict[str, Any],
+        changed_files: Optional[List[str]] = None,
     ) -> None:
         """Post detailed development information as Jira comment."""
-        # Extract key endpoints/functions from code
         endpoints = self._extract_endpoints(code)
         functions = self._extract_functions(code)
         
         comment = (
-            "## 📝 Development Details\n\n"
+            "## \U0001f4dd Development Details\n\n"
             f"**Task:** {task_title}\n"
             f"**PR:** {pr_info.get('html_url', 'N/A')}\n\n"
         )
+        
+        # Changed files section
+        if changed_files:
+            comment += "### \U0001f4c1 Changed Files\n\n"
+            for f in changed_files:
+                comment += f"- `{f}`\n"
+            comment += "\n"
         
         # API Endpoints section
         if endpoints:
@@ -731,8 +882,18 @@ class JiraAgent:
         
         # Implementation notes
         comment += "### ✅ Implementation Details\n\n"
-        comment += f"- **File**: `agents/src/agents/{issue_key}_impl.py`\n"
-        comment += f"- **Tests**: `tests/test_{issue_key}.py`\n"
+        if changed_files:
+            for f in changed_files:
+                comment += f"- **File**: `{f}`\n"
+        else:
+            comment += (
+                f"- **File**: "
+                f"`agents/src/agents/{issue_key}_impl.py`\n"
+            )
+            comment += (
+                f"- **Tests**: "
+                f"`tests/test_{issue_key}.py`\n"
+            )
         comment += f"- **Lines of Code**: ~{len(code.split(chr(10)))} (implementation)\n"
         comment += f"- **Test Coverage**: ~{len(tests.split(chr(10)))} lines (tests)\n"
         comment += "- **Async**: Yes (async/await patterns)\n"
@@ -764,17 +925,24 @@ class JiraAgent:
         code: str,
         tests: str,
         pr_info: Dict[str, Any],
+        changed_files: Optional[List[str]] = None,
     ) -> None:
         """Post a short development summary as Jira comment."""
+        files_str = ", ".join(
+            f"`{f}`" for f in (changed_files or [])
+        )
         comment = (
             "## ✅ Development Summary\n"
             f"**Task:** {task_title}\n"
             f"**PR:** {pr_info.get('html_url', 'N/A')}\n"
+            f"**Changed Files:** {files_str or 'N/A'}\n"
             f"**Code Lines:** {len(code.split(chr(10)))}\n"
             f"**Test Lines:** {len(tests.split(chr(10)))}\n"
         )
         await self.jira_client.add_comment(issue_key, comment)
-        logger.info(f"  📝 Development details posted to {issue_key}")
+        logger.info(
+            f"  📝 Development details posted to {issue_key}"
+        )
     
     def _extract_endpoints(self, code: str) -> list:
         """Extract API endpoints from code."""
@@ -839,3 +1007,13 @@ class JiraAgent:
                 "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
             },
         )
+
+    def _write_code_changes_to_disk(
+        self, code_changes: Dict[str, str]
+    ) -> None:
+        """Write code_changes to disk before review/commit."""
+        for rel_path, content in code_changes.items():
+            full_path = os.path.join(self.git_repo_path, rel_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)

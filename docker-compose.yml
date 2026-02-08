@@ -42,7 +42,6 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    command: python api_server.py
 
   demo-domain-processor:
     build:
@@ -61,7 +60,7 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    command: python job_processor.py
+    command: sh -c "python run_migrations.py && python job_processor.py"
 
   # AI Management Service
   redis:

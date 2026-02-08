@@ -27,11 +27,18 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Manage scheduler lifecycle."""
     # Startup
-    scheduler = get_scheduler()
-    scheduler.start()
+    scheduler_enabled = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
+    scheduler = None
+    if scheduler_enabled:
+        scheduler = get_scheduler()
+        scheduler.start()
+        logger.info("Scheduler enabled")
+    else:
+        logger.info("Scheduler disabled (ENABLE_SCHEDULER=false)")
     yield
     # Shutdown
-    scheduler.stop()
+    if scheduler:
+        scheduler.stop()
 
 app = FastAPI(lifespan=lifespan)
 
