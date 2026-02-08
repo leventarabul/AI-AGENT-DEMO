@@ -16,7 +16,9 @@ async def main():
     # Check the prompt includes demo-domain
     prompt = build_ai_prompt(
         task_title="Add customer_segment field to campaigns",
-        task_description="Add a new customer_segment field (VARCHAR 50) to the campaigns table. This field should store customer segment types like 'VIP', 'STANDARD', 'BASIC'. Update the API to accept and return this field. Update the rule matching to support filtering by customer_segment.",
+        task_description="Add a new customer_segment field (VARCHAR 50) to the campaigns table. This field \
+        should store customer segment types like 'VIP', 'STANDARD', 'BASIC'. Update the API to accept and \
+        return this field. Update the rule matching to support filtering by customer_segment.",
         labels=["demo-domain", "backend"]
     )
     
@@ -45,7 +47,9 @@ async def main():
     
     result = await agent.generate_code(
         task_title="Add customer_segment field to campaigns",
-        task_description="Add a new customer_segment field (VARCHAR 50) to the campaigns table. This field should store customer segment types like 'VIP', 'STANDARD', 'BASIC'. Update the API to accept and return this field.",
+        task_description="Add a new customer_segment field (VARCHAR 50) to the campaigns table. This field \
+        should store customer segment types like 'VIP', 'STANDARD', 'BASIC'. Update the API to accept and \
+        return this field.",
         labels=["demo-domain", "backend"]
     )
     

@@ -22,7 +22,9 @@ async def main():
         "fields": {
             "project": {"key": "DEMO"},
             "summary": "Add customer_segment filter to campaign rules",
-            "description": "Add support for filtering campaign rules by customer_segment. The rule_condition should support matching customer_segment values like 'VIP', 'PREMIUM', 'STANDARD', 'BASIC'. Update the database schema, API, and job processor logic.",
+            "description": "Add support for filtering campaign rules by customer_segment. The rule_condition \
+            should support matching customer_segment values like 'VIP', 'PREMIUM', 'STANDARD', 'BASIC'. Update \
+            the database schema, API, and job processor logic.",
             "issuetype": {"name": "Task"},
             "labels": ["demo-domain", "campaign-rules"],
         }

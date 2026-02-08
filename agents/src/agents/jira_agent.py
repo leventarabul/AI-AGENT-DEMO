@@ -28,7 +28,8 @@ class JiraAgent:
         git_user_email: str = "agent@ai.local",
     ):
         self.jira_client = JiraClient(jira_url, jira_username, jira_token)
-        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", "http://ai-management-service:8001")
+        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", \
+        "http://ai-management-service:8001")
         self.ai_client = AIManagementClient(self.ai_management_url)
         self.git_repo_path = git_repo_path or os.getenv("GIT_REPO_PATH") or os.getcwd()
         self.git_user_name = git_user_name
@@ -170,13 +171,14 @@ class JiraAgent:
         if can_post_success:
             await self.jira_client.add_comment(
                 issue_key,
-                f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
+                f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: \
+                {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
             )
         else:
             logger.info("  ⚠️ Success comment skipped: missing git repo or PR info")
         
         # Move issue to Code Review (fallback to In Review if not available)
-        await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])        
+        await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])
         
         return {
             "issue_key": issue_key,

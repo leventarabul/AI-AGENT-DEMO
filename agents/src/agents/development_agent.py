@@ -218,7 +218,8 @@ class DevelopmentAgent:
 
     def _ensure_logger(self, lines: List[str]) -> List[str]:
         has_logging_import = any(re.match(r"\s*import\s+logging\b", line) for line in lines)
-        has_logger = any(re.match(r"\s*logger\s*=\s*logging\.getLogger\(__name__\)", line) for line in lines)
+        has_logger = any(re.match(r"\s*logger\s*=\s*logging\.getLogger\(__name__\)", line) for line in \
+        lines)
 
         if has_logging_import and has_logger:
             return lines

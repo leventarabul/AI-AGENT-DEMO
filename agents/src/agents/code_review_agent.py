@@ -140,7 +140,8 @@ class CodeReviewAgent:
             reasoning = self._generate_reasoning(
                 decision, architecture_violations, standard_violations, edge_cases
             )
-            approval_notes = "Code review passed. Ready for testing." if decision == ReviewDecision.APPROVE else None
+            approval_notes = "Code review passed. Ready for testing." if decision == ReviewDecision.APPROVE \
+            else None
             
             return CodeReviewResult(
                 success=True,
