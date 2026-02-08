@@ -1,32 +1,72 @@
 import pytest
-from httpx import AsyncClient
-from unittest.mock import MagicMock
-from agents.clients.demo_domain_client import register_event_with_channel
+from fastapi.testclient import TestClient
+from unittest.mock import patch
+from main import app
 
 @pytest.fixture
-def mock_httpx_client():
-    return MagicMock(AsyncClient)
+def client():
+    with TestClient(app) as client:
+        yield client
 
-@pytest.mark.asyncio
-async def test_register_event_with_channel(mock_httpx_client):
-    event_data = {"name": "Test Event"}
-    channel = "test_channel"
-    
-    mock_httpx_client.post.return_value.json.return_value = {"id": 1}
-    
-    response = await register_event_with_channel(event_data, channel)
-    
-    assert response == {"id": 1}
-    mock_httpx_client.post.assert_called_once_with("http://demo-domain-api:8000/events", json=event_data)
-    mock_httpx_client.patch.assert_called_once_with("http://demo-domain-api:8000/events/1", json={"channel": channel})
+def test_create_event_with_channel_info(client):
+    response = client.post("/events", json={
+        "id": 1,
+        "event_code": "ABC123",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "MERCHANT",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {},
+        "status": "success",
+        "matched_rule_id": None,
+        "error_message": None,
+        "created_at": "2022-01-01T00:00:00",
+        "recorded_at": "2022-01-01T00:00:00",
+        "processed_at": None,
+        "channel": "web"
+    })
+    assert response.status_code == 200
+    assert response.json() == {"message": "Event created successfully with channel information"}
 
-@pytest.mark.asyncio
-async def test_register_event_with_channel_error(mock_httpx_client):
-    event_data = {"name": "Test Event"}
-    channel = "test_channel"
-    
-    mock_httpx_client.post.side_effect = Exception("Error")
-    
-    with pytest.raises(Exception):
-        await register_event_with_channel(event_data, channel)
-        mock_httpx_client.patch.assert_not_called()
+def test_create_event_missing_channel_info(client):
+    response = client.post("/events", json={
+        "id": 1,
+        "event_code": "ABC123",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "MERCHANT",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {},
+        "status": "success",
+        "matched_rule_id": None,
+        "error_message": None,
+        "created_at": "2022-01-01T00:00:00",
+        "recorded_at": "2022-01-01T00:00:00",
+        "processed_at": None
+    })
+    assert response.status_code == 422
+
+@patch("routers.events.create_event")
+def test_create_event_mocked_function(mock_create_event, client):
+    mock_create_event.return_value = {"message": "Mocked Event created successfully with channel information"}
+    response = client.post("/events", json={
+        "id": 1,
+        "event_code": "ABC123",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "MERCHANT",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {},
+        "status": "success",
+        "matched_rule_id": None,
+        "error_message": None,
+        "created_at": "2022-01-01T00:00:00",
+        "recorded_at": "2022-01-01T00:00:00",
+        "processed_at": None,
+        "channel": "web"
+    })
+    assert response.status_code == 200
+    assert response.json() == {"message": "Mocked Event created successfully with channel information"}

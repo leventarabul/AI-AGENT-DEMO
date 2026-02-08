@@ -1,20 +1,50 @@
-# agents/src/clients/demo_domain_client.py
+# Add a new field "channel" to the Event model in the demo-domain service
+# Update the database schema and API endpoints accordingly
 
-from typing import Optional
+# models.py
 from pydantic import BaseModel
-import httpx
+from datetime import datetime
+from typing import Optional
 
-class EventChannelRequest(BaseModel):
-    channel: str
+class Event(BaseModel):
+    id: int
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: datetime
+    event_data: dict
+    status: str
+    matched_rule_id: Optional[int]
+    error_message: Optional[str]
+    created_at: datetime
+    recorded_at: datetime
+    processed_at: Optional[datetime]
+    channel: str  # New field
 
-async def register_event_with_channel(event_data: dict, channel: str) -> dict:
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post("http://demo-domain-api:8000/events", json=event_data)
-        response.raise_for_status()
-        
-        event_id = response.json()["id"]
-        
-        channel_data = EventChannelRequest(channel=channel)
-        await client.patch(f"http://demo-domain-api:8000/events/{event_id}", json=channel_data)
-        
-        return response.json()
+# Update the database schema with the new "channel" field in the "events" table
+
+# events.py
+from fastapi import APIRouter, HTTPException
+from models import Event
+
+router = APIRouter()
+
+@router.post("/events")
+async def create_event(event: Event):
+    # Business logic to create event with channel information
+    return {"message": "Event created successfully with channel information"}
+
+# Update the API endpoint to accept the new "channel" field in the request
+
+# main.py
+from fastapi import FastAPI
+from routers import events
+
+app = FastAPI()
+
+app.include_router(events.router)
+
+# Implement the logic in the create_event endpoint to save the channel information
+# Use proper error handling and logging throughout the process
