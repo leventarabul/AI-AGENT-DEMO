@@ -4,9 +4,14 @@ import os
 import logging
 from typing import Optional
 
-from .base_client import BaseLLMClient, LLMResponse
-from .openai_client import OpenAIClient
-from .anthropic_client import AnthropicClient
+try:
+    from .base_client import BaseLLMClient, LLMResponse
+    from .openai_client import OpenAIClient
+    from .anthropic_client import AnthropicClient
+except ImportError:
+    from base_client import BaseLLMClient, LLMResponse
+    from openai_client import OpenAIClient
+    from anthropic_client import AnthropicClient
 
 logger = logging.getLogger(__name__)
 

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Orchestrator: Single entry point for agent orchestration.
 
 Accepts an intent, applies decision rules, executes agents sequentially.
@@ -233,7 +235,7 @@ class Orchestrator:
             git_service = create_git_service(repo_root)
             
             # Execute git operations
-            print(f"  🔧 Running git operations in {repo_root}")
+            logger.info(f"  🔧 Running git operations in {repo_root}")
             git_result = git_service.execute_operation(
                 files=files_list,
                 commit_message=dev_output.commit_message,
@@ -243,7 +245,7 @@ class Orchestrator:
             # Check result
             if not git_result.success:
                 error_msg = f"Git operations failed: {git_result.error}"
-                print(f"  ✗ {error_msg}")
+                logger.info(f"  ✗ {error_msg}")
                 
                 # Update trace with error
                 trace.update_step(
@@ -269,7 +271,7 @@ class Orchestrator:
             
         except Exception as e:
             error_msg = f"Git operations exception: {str(e)}"
-            print(f"  ✗ {error_msg}")
+            logger.info(f"  ✗ {error_msg}")
             
             # Update trace
             trace.update_step(
@@ -446,12 +448,12 @@ class Orchestrator:
                     agent = self._get_agent(task.agent)
                     
                     # Execute agent
-                    print(f"\n▶ Executing {task.agent}: {task.task}")
+                    logger.info(f"\n▶ Executing {task.agent}: {task.task}")
                     output = agent.execute(intent.context)
                     
                     # POST-EXECUTION HOOK: If development_agent, run git operations
                     if task.agent == "development_agent" and output.success:
-                        print(f"  📝 Development agent completed. Processing git operations...")
+                        logger.info(f"  📝 Development agent completed. Processing git operations...")
                         git_result = self._execute_git_operations(output, intent.context, trace, step)
                         
                         if not git_result:
@@ -466,8 +468,48 @@ class Orchestrator:
                         
                         # Git succeeded - extract commit hash
                         final_commit = git_result
-                        print(f"  ✓ Git operations completed. Commit: {final_commit}")
+                        logger.info(f"  ✓ Git operations completed. Commit: {final_commit}")
+                        # Update context with the actual code changes written by DevelopmentAgent
+                        intent.context["code_changes"] = {
+                            file_change.path: file_change.content
+                            for file_change in output.files
+                        }
                     
+                    # Auto-fix loop for code review failures (single attempt)
+                    if task.agent == "code_review_agent" and hasattr(output, "decision"):
+                        from agents.code_review_agent import ReviewDecision
+                        if output.decision in (ReviewDecision.BLOCK, ReviewDecision.REQUEST_CHANGES):
+                            if not intent.context.get("auto_fix_attempted"):
+                                intent.context["auto_fix_attempted"] = True
+                                logger.info("  🛠️  Code review failed. Attempting auto-fix via DevelopmentAgent...")
+                                dev_agent = self._get_agent("development_agent")
+                                fix_context = {
+                                    **intent.context,
+                                    "auto_fix": True,
+                                    "review_issues": output.issues,
+                                }
+                                fix_output = dev_agent.execute(fix_context)
+                                if fix_output.success:
+                                    logger.info("  🧩 Auto-fix completed. Applying git operations...")
+                                    git_result = self._execute_git_operations(
+                                        fix_output,
+                                        intent.context,
+                                        trace,
+                                        step,
+                                    )
+                                    if git_result:
+                                        final_commit = git_result
+                                        intent.context["code_changes"] = {
+                                            file_change.path: file_change.content
+                                            for file_change in fix_output.files
+                                        }
+                                        output = agent.execute(intent.context)
+                                        logger.info("  🔁 Re-running code review after auto-fix...")
+                                    else:
+                                        logger.info("  ⚠️ Auto-fix git operations failed.")
+                                else:
+                                    logger.info(f"  ⚠️ Auto-fix failed: {fix_output.error}")
+
                     # Centralized failure detection for ALL agents
                     should_continue, error_message = self._check_agent_result(task.agent, output)
                     
@@ -522,7 +564,7 @@ class Orchestrator:
                     if hasattr(output, 'commit_hash') and output.commit_hash:
                         final_commit = output.commit_hash
                     
-                    print(f"✓ {task.agent} completed successfully")
+                    logger.info(f"✓ {task.agent} completed successfully")
                     
                 except Exception as e:
                     # Execution error - update trace

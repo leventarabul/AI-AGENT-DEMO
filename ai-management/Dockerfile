@@ -6,7 +6,8 @@ COPY src/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ai_management/ ./
+# Copy all source files from models (production code)
+COPY src/models/ /app/
 
 EXPOSE 8001
 
