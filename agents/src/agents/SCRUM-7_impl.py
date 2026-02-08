@@ -1,35 +1,20 @@
-# models/event.py
-from pydantic import BaseModel
-from typing import Optional
+# Update the events table schema to include a new field for channel
+ALTER TABLE events ADD COLUMN channel TEXT;
 
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: str
-    event_data: Optional[dict] = None
-    channel: Optional[str] = None
-
-# api_server.py
-from fastapi import FastAPI
-from models.event import Event
-
-app = FastAPI()
-
+# Update the API endpoint to accept and store the channel field
 @app.post("/events")
-async def create_event(event: Event):
-    # Save event to database with channel info
-    event_dict = event.dict()
-    event_dict.pop("channel")
-    # Save event_dict and event.channel to database
-    return {"status": "Event created successfully"}
+async def create_event(event: EventCreate):
+    event_data = event.dict()
+    
+    # Extract and store the channel field
+    channel = event_data.pop("channel", None)
+    
+    # Save the event with the channel field
+    new_event = await save_event(event_data, channel)
+    return new_event
 
-# database.py
-import asyncpg
-
-async def save_event(event_dict, channel):
-    conn = await asyncpg.connect(user='admin', password='admin123', database='crm_demo', host='localhost')
-    await conn.execute("INSERT INTO events (event_data, channel) VALUES ($1, $2)", event_dict, channel)
-    await conn.close()
+# Update the save_event function to include the channel field
+async def save_event(event_data: dict, channel: str):
+    new_event = Event(**event_data, channel=channel)
+    await new_event.save()
+    return new_event
