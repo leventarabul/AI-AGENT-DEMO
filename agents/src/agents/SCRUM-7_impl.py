@@ -1,39 +1,13 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import httpx
+# Add a new field 'channel' to the events table in the database
+ALTER TABLE events ADD COLUMN channel TEXT;
 
-app = FastAPI()
-
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: str
-    event_data: dict
-    channel: str
-
+# Update the API endpoint to accept 'channel' field in the request body
 @app.post("/events")
 async def create_event(event: Event):
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("http://demo-domain-api:8000/events", json=event.dict())
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail="Error connecting to demo-domain service")
-
-@app.post("/admin/jobs/process-events")
-async def trigger_event_processing_job():
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("http://demo-domain-api:8000/admin/jobs/process-events")
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail="Error connecting to demo-domain service")
+    # Extract the channel field from the request body
+    channel = event.channel
+    # Save the event to the database including the channel
+    new_event = Event.create(event_code=event.event_code, customer_id=event.customer_id, transaction_id=event.transaction_id,
+                             merchant_id=event.merchant_id, amount=event.amount, event_data=event.event_data, channel=channel)
+    # Return the created event
+    return new_event

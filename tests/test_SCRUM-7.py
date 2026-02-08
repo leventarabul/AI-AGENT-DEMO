@@ -1,49 +1,27 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 @pytest.fixture
-def client():
-    from main import app
-    return TestClient(app)
+def mock_event():
+    return Event(event_code='123', customer_id='456', transaction_id='789', merchant_id='987', amount=100.0, event_data='test_data', channel='online')
 
-@pytest.mark.asyncio
-async def test_create_event(client):
-    event_data = {
-        "event_code": "test_code",
-        "customer_id": "test_customer_id",
-        "transaction_id": "test_transaction_id",
-        "merchant_id": "test_merchant_id",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {},
-        "channel": "web"
-    }
+def test_create_event_success(client, mock_event):
+    response = client.post("/events", json=mock_event.dict())
+    assert response.status_code == 200
+    assert response.json()["event_code"] == mock_event.event_code
 
-    with patch("httpx.AsyncClient") as MockAsyncClient:
-        mock_post = MockAsyncClient.return_value.post
-        mock_post.return_value.json = asyncmock.CoroutineMock(return_value={"success": True})
-        
-        response = await client.post("/events", json=event_data)
-        assert response.status_code == 200
-        assert response.json() == {"success": True}
+def test_create_event_missing_channel(client, mock_event):
+    del mock_event["channel"]
+    response = client.post("/events", json=mock_event.dict())
+    assert response.status_code == 422
 
-@pytest.mark.asyncio
-async def test_trigger_event_processing_job(client):
-    with patch("httpx.AsyncClient") as MockAsyncClient:
-        mock_post = MockAsyncClient.return_value.post
-        mock_post.return_value.json = asyncmock.CoroutineMock(return_value={"success": True})
-        
-        response = await client.post("/admin/jobs/process-events")
-        assert response.status_code == 200
-        assert response.json() == {"success": True}
+def test_create_event_invalid_channel(client, mock_event):
+    mock_event["channel"] = 123
+    response = client.post("/events", json=mock_event.dict())
+    assert response.status_code == 422
 
-@pytest.mark.asyncio
-async def test_create_event_connection_error(client):
-    with patch("httpx.AsyncClient") as MockAsyncClient:
-        mock_post = MockAsyncClient.return_value.post
-        mock_post.side_effect = httpx.RequestError
-        
-        response = await client.post("/events")
+def test_create_event_database_error(client, mock_event):
+    with patch('app.Event.create') as mock_create:
+        mock_create.side_effect = Exception("Database error")
+        response = client.post("/events", json=mock_event.dict())
         assert response.status_code == 500
-        assert response.json() == {"detail": "Error connecting to demo-domain service"}
