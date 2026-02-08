@@ -268,7 +268,10 @@ async def _transition_issue_to_status(
             if target:
                 break
         if not target:
-            logger.warning(f"No matching transition found for {target_names}; skipping status change")
+            logger.warning(
+                "No matching transition found for %s; skipping status change",
+                target_names,
+            )
             return
         await jira_client.transition_issue(issue_key, transition_id=target.get("id"))
         logger.info(f"Transitioned '{issue_key}' to '{target.get('name')}'")

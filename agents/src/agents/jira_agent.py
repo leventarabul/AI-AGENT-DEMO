@@ -167,24 +167,44 @@ class JiraAgent:
             )
         
         # Step 6: Update Jira task status (only if we actually produced a PR in a git repo)
-        can_post_success = self._is_git_repo() and pr_info.get("html_url") not in (None, "N/A")
+        can_post_success = (
+            self._is_git_repo() and pr_info.get("html_url") not in (None, "N/A")
+        )
         if can_post_success:
+            pr_url = pr_info.get("html_url", "N/A")
             await self.jira_client.add_comment(
                 issue_key,
-                f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: \
-                {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
+                (
+                    "✅ AI Agent completed development:\n"
+                    "- Code generated and tested\n"
+                    f"- PR created: {pr_url}\n"
+                    "- Ready for code review"
+                ),
             )
         else:
-            logger.info("  ⚠️ Success comment skipped: missing git repo or PR info")
+            logger.info(
+                "  ⚠️ Success comment skipped: missing git repo or PR info"
+            )
         
         # Move issue to Code Review (fallback to In Review if not available)
-        await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])
+        await self._transition_to_status(
+            issue_key,
+            target_names=["Code Review", "In Review", "Review"],
+        )
         
         return {
             "issue_key": issue_key,
             "branch": branch_name,
-            "code": generated_code[:200] + "..." if len(generated_code) > 200 else generated_code,
-            "tests": generated_tests[:200] + "..." if len(generated_tests) > 200 else generated_tests,
+            "code": (
+                generated_code[:200] + "..."
+                if len(generated_code) > 200
+                else generated_code
+            ),
+            "tests": (
+                generated_tests[:200] + "..."
+                if len(generated_tests) > 200
+                else generated_tests
+            ),
             "commit_sha": commit_sha,
             "pr": pr_info,
         }
@@ -202,7 +222,10 @@ class JiraAgent:
                 if target:
                     break
             if not target:
-                logger.info(f"  ⚠️ No matching transition found for {target_names}; skipping status change")
+                logger.info(
+                    "  ⚠️ No matching transition found for %s; skipping status change",
+                    target_names,
+                )
                 return
             await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
             logger.info(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
@@ -222,15 +245,16 @@ class JiraAgent:
         code_prompt = (
             prompt + "\n\n"
             "---\n\n"
-            "You are an expert Python developer. Based on the system architecture and code patterns above, "
-            "write production-ready Python code to implement this task.\n\n"
+            "You are an expert Python developer. Based on the system architecture "
+            "and code patterns above, write production-ready Python code to "
+            "implement this task.\n\n"
             "IMPORTANT:\n"
             "1. Follow the existing code patterns (async/await, FastAPI, httpx)\n"
             "2. Include proper error handling and logging\n"
             "3. Add type hints\n"
             "4. Output ONLY the code, no explanations\n"
             "5. Start with ```python and end with ```\n"
-            "6. NEVER use print(); always use the logging module\n"
+            "6. NEVER use logger.info(); always use the logging module\n"
         )
         
         response = await self.ai_client.generate(
@@ -319,7 +343,10 @@ class JiraAgent:
                 capture_output=True,
             )
             
-            commit_sha = result.stdout.split("(")[0].strip() if result.returncode == 0 else "unknown"
+            if result.returncode == 0:
+                commit_sha = result.stdout.split("(")[0].strip()
+            else:
+                commit_sha = "unknown"
             
             # Push to remote
             self._run_git(["push", "-u", "origin", branch_name])
@@ -727,7 +754,12 @@ class JiraAgent:
         endpoints = []
         lines = code.split("\n")
         for line in lines:
-            if "@app.get" in line or "@app.post" in line or "@router.get" in line or "@router.post" in line:
+            if (
+                "@app.get" in line
+                or "@app.post" in line
+                or "@router.get" in line
+                or "@router.post" in line
+            ):
                 # Try to extract path
                 if '"/' in line or "'/" in line:
                     import re

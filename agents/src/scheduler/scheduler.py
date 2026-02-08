@@ -218,7 +218,12 @@ class AgentScheduler:
                             env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
                         )
                         subprocess.run(
-                            ["git", "commit", "-m", f"fix({issue_key}): address code review feedback"],
+                            [
+                                "git",
+                                "commit",
+                                "-m",
+                                f"fix({issue_key}): address code review feedback",
+                            ],
                             cwd=self.git_repo_path,
                             check=False,
                             env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
@@ -262,7 +267,14 @@ class AgentScheduler:
                     )
                 else:
                     await self._transition_issue_to_status(
-                        jira_client, issue_key, ["Waiting Development", "In Development", "To Do", "Blocked"]
+                        jira_client,
+                        issue_key,
+                        [
+                            "Waiting Development",
+                            "In Development",
+                            "To Do",
+                            "Blocked",
+                        ],
                     )
         
         except Exception as e:
@@ -351,7 +363,10 @@ class AgentScheduler:
                 if target:
                     break
             if not target:
-                logger.warning(f"No matching transition found for {target_names}; skipping status change")
+                logger.warning(
+                    "No matching transition found for %s; skipping status change",
+                    target_names,
+                )
                 return
             await jira_client.transition_issue(issue_key, transition_id=target.get("id"))
             logger.info(f"Transitioned '{issue_key}' to '{target.get('name')}'")

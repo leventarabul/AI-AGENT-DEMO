@@ -19,6 +19,11 @@ docker compose ps
 curl -u admin:{PASSWORD} http://localhost:8000/health
 ```
 
+**Live log streaming not starting?**
+- If no output appears, ensure containers are running: `docker compose ps`.
+- Start logs in a dedicated terminal: `docker compose logs -f --tail=200`.
+- To always start logs with the system, run in foreground: `docker compose up` (no `-d`).
+
 ## 🏗️ Architecture
 
 3 independent services communicating via REST APIs:
