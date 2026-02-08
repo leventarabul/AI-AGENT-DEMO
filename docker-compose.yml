@@ -111,12 +111,16 @@ services:
       AI_MANAGEMENT_URL: http://ai-management:8001
       DEMO_DOMAIN_USERNAME: ${API_USERNAME:-admin}
       DEMO_DOMAIN_PASSWORD: ${API_PASSWORD:-admin123}
-      GIT_REPO_PATH: /app
+      GIT_REPO_PATH: /workspace
+      GIT_DISCOVERY_ACROSS_FILESYSTEM: "1"
       # Jira configuration (required for agents)
       JIRA_URL: ${JIRA_URL:-https://leventarabul.atlassian.net}
       JIRA_USERNAME: ${JIRA_USERNAME:-}
       JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
       JIRA_WEBHOOK_SECRET: ${JIRA_WEBHOOK_SECRET:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO_URL: ${GITHUB_REPO_URL:-}
+      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-}
     depends_on:
       - demo-domain-api
       - ai-management
@@ -124,6 +128,7 @@ services:
       - app-network
     volumes:
       - ./agents:/app
+      - ./:/workspace
     command: uvicorn ai_server:app --host 0.0.0.0 --port 8002 --log-level debug
 
 volumes:

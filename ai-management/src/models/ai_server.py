@@ -4,7 +4,6 @@ import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from dataclasses import asdict, is_dataclass
 from typing import Optional, Dict, Any, List
 from manager import LLMClientManager
 from cache_manager import CacheManager
@@ -111,10 +110,6 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
             max_tokens=request.max_tokens,
             temperature=request.temperature
         )
-
-        # Normalize response for cache/JSON serialization
-        if is_dataclass(response):
-            response = asdict(response)
         
         # Cache the response (skip if error)
         if request.use_cache:
@@ -122,27 +117,25 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
                 await cache_manager.set(
                     request.prompt,
                     request.provider,
-                    response.get("model"),
+                    response.model,
                     response
                 )
                 logger.info("💾 Response cached successfully")
             except Exception as cache_err:
                 logger.warning(f"Cache set failed: {cache_err}, response still returned")
         
-        # Ensure required fields for response model
-        input_tokens = response.get("input_tokens")
-        output_tokens = response.get("output_tokens")
-        if response.get("token_count") is None:
-            try:
-                response["token_count"] = (
-                    (int(input_tokens) if input_tokens is not None else 0) +
-                    (int(output_tokens) if output_tokens is not None else 0)
-                )
-            except Exception:
-                response["token_count"] = 0
-        response["cached"] = False
+        # Return response directly (it's already an LLMResponse dataclass)
         logger.info("✅ Request completed successfully")
-        return GenerateResponse(**response)
+        return GenerateResponse(
+            text=response.text,
+            model=response.model,
+            provider=response.provider,
+            token_count=response.token_count,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            stop_reason=response.stop_reason,
+            cached=False
+        )
     
     except ValueError as e:
         logger.error(f"Validation error: {e}")
