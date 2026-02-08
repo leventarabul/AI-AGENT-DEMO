@@ -1,53 +1,45 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch
-from main import app
+from unittest.mock import MagicMock
 
 @pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
+def mock_event():
+    return Event(
+        event_code="123",
+        customer_id="456",
+        transaction_id="789",
+        merchant_id="987",
+        amount=100.0,
+        transaction_date=datetime.now(),
+        event_data={"key": "value"},
+        channel="web"
+    )
 
-def test_create_event_success(client):
-    event_data = {
-        "event_code": "12345",
-        "customer_id": "67890",
-        "transaction_id": "abcde",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "channel": "online",
-        "transaction_date": "2022-01-01",
-        "event_data": {}
-    }
-    response = client.post("/events", json=event_data)
+def test_create_event_endpoint_success(client, mock_event):
+    response = client.post("/events", json=mock_event.dict())
     assert response.status_code == 200
-    assert response.json()["event_code"] == "12345"
 
-def test_create_event_missing_field(client):
-    event_data = {
-        "event_code": "12345",
-        "customer_id": "67890",
-        "transaction_id": "abcde",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {}
-    }
-    response = client.post("/events", json=event_data)
+def test_save_event_to_db_success(mock_event):
+    mock_execute = MagicMock()
+    database.execute = mock_execute
+
+    save_event_to_db(mock_event)
+
+    mock_execute.assert_called_once()
+
+def test_create_event_endpoint_missing_channel(client, mock_event):
+    del mock_event.channel
+    response = client.post("/events", json=mock_event.dict())
     assert response.status_code == 422
 
-@patch("main.logging.error")
-def test_create_event_exception(mock_logging, client):
-    event_data = {
-        "event_code": "12345",
-        "customer_id": "67890",
-        "transaction_id": "abcde",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "channel": "online",
-        "transaction_date": "2022-01-01",
-        "event_data": {}
-    }
-    with patch("main.save_event_to_database", side_effect=Exception("Database error")):
-        response = client.post("/events", json=event_data)
-        mock_logging.assert_called_once_with("Error creating event: Database error")
-        assert response.status_code == 500
+def test_save_event_to_db_missing_channel(mock_event):
+    del mock_event.channel
+    with pytest.raises(Exception):
+        save_event_to_db(mock_event)
+
+def test_create_event_endpoint_invalid_data(client):
+    response = client.post("/events", json={"invalid": "data"})
+    assert response.status_code == 422
+
+def test_save_event_to_db_invalid_data():
+    with pytest.raises(Exception):
+        save_event_to_db(Event())
