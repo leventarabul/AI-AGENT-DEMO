@@ -1,35 +1,37 @@
-# Add new field 'channel' to the Event model
-class Event(BaseModel):
-    id: Optional[int]
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: datetime
-    event_data: dict
-    status: str
-    matched_rule_id: Optional[int]
-    error_message: Optional[str]
-    created_at: datetime
-    recorded_at: datetime
-    processed_at: Optional[datetime]
-    channel: str
+from fastapi import FastAPI, HTTPException
+import httpx
 
-# Update the event registration API endpoint to include the 'channel' field
+app = FastAPI()
+
+DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
+AI_MANAGEMENT_URL = "http://ai-management-service:8001"
+
 @app.post("/events")
-async def create_event(event: Event, channel: str):
-    # Save the event to the database with the provided channel
-    event.channel = channel
-    # Your logic to save the event
-    return event
+async def create_event(event_data: dict):
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.post(f"{DEMO_DOMAIN_URL}/events", json=event_data)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
 
-# Update the data flow to include the 'channel' field
-# 1. Agents receives an event request
-# 2. Builds AI prompt with customer context
-# 3. Calls ai-management `/generate` for suggestion
-# 4. Registers event in demo-domain (transaction amount and channel)
-# 5. Returns suggested reward separately
+@app.post("/events/{event_id}/process")
+async def process_event(event_id: int):
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.post(f"{DEMO_DOMAIN_URL}/events/{event_id}/process")
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
 
-# Update the Event model in the database schema to include the 'channel' field
-ALTER TABLE events ADD COLUMN channel VARCHAR(255);
+@app.post("/ai/generate")
+async def generate_suggestion(prompt: str):
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.post(f"{AI_MANAGEMENT_URL}/generate", json={"prompt": prompt})
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
