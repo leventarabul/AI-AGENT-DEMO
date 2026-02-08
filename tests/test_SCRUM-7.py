@@ -1,41 +1,27 @@
 import pytest
-from unittest.mock import MagicMock, patch
-from app import create_event, save_event
+from unittest.mock import patch
+from my_module import EventLog, save_event_log
 
 @pytest.fixture
-def event_data():
-    return {
-        "name": "Test Event",
-        "date": "2022-01-01",
-        "description": "This is a test event"
-    }
+def mock_event_id():
+    return 1
 
 @pytest.fixture
-def event_create():
-    return {
-        "name": "Test Event",
-        "date": "2022-01-01",
-        "description": "This is a test event",
-        "channel": "Test Channel"
-    }
+def mock_channel():
+    return "test_channel"
 
-@pytest.mark.asyncio
-async def test_create_event(event_data, event_create):
-    with patch('app.save_event') as mock_save_event:
-        mock_save_event.return_value = MagicMock()
-        
-        result = await create_event(event_create)
-        
-        assert mock_save_event.called
-        assert result is not None
+def test_save_event_log_successful(mock_event_id, mock_channel):
+    assert save_event_log(mock_event_id, mock_channel) is None
 
-@pytest.mark.asyncio
-async def test_save_event(event_data):
-    with patch('app.Event.save') as mock_save:
-        mock_event = MagicMock()
-        mock_save.return_value = mock_event
-        
-        result = await save_event(event_data, "Test Channel")
-        
-        assert mock_save.called
-        assert result is not None
+def test_event_log_creation():
+    event_log = EventLog(channel="test_channel")
+    assert event_log.channel == "test_channel"
+
+def test_save_event_log_missing_channel(mock_event_id):
+    with pytest.raises(TypeError):
+        save_event_log(mock_event_id, None)
+
+@patch('my_module.save_event_log', side_effect=Exception("Database Connection Error"))
+def test_save_event_log_exception(mock_save_event_log, mock_event_id, mock_channel):
+    with pytest.raises(Exception, match="Database Connection Error"):
+        save_event_log(mock_event_id, mock_channel)
