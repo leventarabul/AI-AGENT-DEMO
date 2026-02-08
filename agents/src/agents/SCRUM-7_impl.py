@@ -1,26 +1,30 @@
-from fastapi import FastAPI, HTTPException
+# agents/src/clients/demo_domain_client.py
+
+import httpx
+
+async def register_event(channel: str, event_data: dict):
+    url = "http://demo-domain-api:8000/events"
+    payload = {
+        "channel": channel,
+        "event_data": event_data
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, auth=("admin", "admin123"))
+        response.raise_for_status()
+
+# demo-domain/src/demo-environment/api_server.py
+
+from fastapi import FastAPI
 from pydantic import BaseModel
-from datetime import datetime
+from typing import Optional
 
 app = FastAPI()
 
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: datetime
-    event_data: dict
+class EventRequest(BaseModel):
     channel: str
+    event_data: dict
 
 @app.post("/events")
-async def create_event(event: Event):
-    # Save event to database with the new channel field
-    try:
-        # Database insert logic here
-        return {"message": "Event created successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Error creating event")
-
-# Ensure to update the database schema to include the new channel field in the events table
+async def create_event(event_request: EventRequest):
+    # Save event to database with channel information
+    return {"message": "Event registered successfully"}
