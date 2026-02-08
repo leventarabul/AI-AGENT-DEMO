@@ -1,47 +1,31 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
-from app import app
-from app import create_event
+from agents.SCRUM-7_impl import router
+
+client = TestClient(router)
 
 @pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
+def valid_event_id():
+    return 1
 
-def test_create_event_success(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
+@pytest.fixture
+def invalid_event_id():
+    return 0
 
-    response = client.post("/events/", json=event_data)
-
+def test_add_channel_valid_event_id(valid_event_id):
+    response = client.post("/events/1/channel", json={"channel": "test_channel"})
     assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully"}
+    assert response.json() == {"event_id": valid_event_id, "channel": "test_channel"}
 
-@patch('app.httpx.AsyncClient')
-def test_create_event_http_error(mock_http_client, client):
-    mock_http_client.return_value.post.side_effect = Exception("Mocked HTTPError")
+def test_add_channel_invalid_event_id(invalid_event_id):
+    response = client.post(f"/events/{invalid_event_id}/channel", json={"channel": "test_channel"})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Event not found"}
 
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-
-    response = client.post("/events/", json=event_data)
-
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Internal Server Error"}
+@patch('agents.SCRUM-7_impl.router.add_channel')
+def test_add_channel_mocked_update_event(mock_add_channel):
+    mock_add_channel.return_value = {"event_id": 1, "channel": "mocked_channel"}
+    response = client.post("/events/1/channel", json={"channel": "test_channel"})
+    assert response.status_code == 200
+    assert response.json() == {"event_id": 1, "channel": "mocked_channel"}
