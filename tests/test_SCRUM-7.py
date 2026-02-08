@@ -1,37 +1,33 @@
 import pytest
-from httpx import Response
-from unittest.mock import AsyncMock, patch
-from agents.src.clients.demo_domain_client import register_event, DEMO_DOMAIN_URL
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def event_data():
-    return {
-        "name": "Test Event",
-        "date": "2022-01-01",
-        "location": "Test Location"
-    }
+def mock_httpx_client():
+    return AsyncMock()
 
 @pytest.mark.asyncio
-async def test_register_event_success(event_data):
-    expected_response = {"status": "success"}
-    with patch("httpx.AsyncClient") as MockAsyncClient:
-        mock_client = MockAsyncClient.return_value
-        mock_client.post.return_value = Response(200, json=expected_response)
+async def test_update_event_channel(mock_httpx_client):
+    event_id = 1
+    channel = "test_channel"
+    
+    mock_httpx_client.patch.return_value.raise_for_status = AsyncMock()
+    
+    async with httpx.AsyncClient() as client:
+        url = f"http://demo-domain-api:8000/events/{event_id}"
+        payload = {"channel": channel}
+        headers = {"Content-Type": "application/json"}
         
-        response = await register_event(event_data)
+        await update_event_channel(event_id, channel)
         
-        assert response == expected_response
-        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, \
-        auth=("admin", "admin123"))
-
+        mock_httpx_client.patch.assert_awaited_once_with(url, json=payload, headers=headers)
+        mock_httpx_client.patch.return_value.raise_for_status.assert_awaited_once()
+        
 @pytest.mark.asyncio
-async def test_register_event_error(event_data):
-    with patch("httpx.AsyncClient") as MockAsyncClient:
-        mock_client = MockAsyncClient.return_value
-        mock_client.post.return_value = Response(400)
-        
-        with pytest.raises(Exception):
-            await register_event(event_data)
-        
-        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, \
-        auth=("admin", "admin123"))
+async def test_update_event_channel_error(mock_httpx_client):
+    event_id = 1
+    channel = "test_channel"
+    
+    mock_httpx_client.patch.side_effect = httpx.RequestError("Mocked error")
+    
+    with pytest.raises(httpx.RequestError):
+        await update_event_channel(event_id, channel)

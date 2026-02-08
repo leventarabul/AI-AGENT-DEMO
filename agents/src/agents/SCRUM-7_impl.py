@@ -2,11 +2,10 @@
 
 import httpx
 
-DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
-
-async def register_event(event_data: dict) -> dict:
-    url = f"{DEMO_DOMAIN_URL}/events"
+async def update_event_channel(event_id: int, channel: str):
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=event_data, auth=("admin", "admin123"))
+        url = f"http://demo-domain-api:8000/events/{event_id}"
+        payload = {"channel": channel}
+        headers = {"Content-Type": "application/json"}
+        response = await client.patch(url, json=payload, headers=headers)
         response.raise_for_status()
-        return response.json()
