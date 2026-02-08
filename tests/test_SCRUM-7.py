@@ -1,43 +1,42 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-from datetime import datetime
-
-from api_server import app, Event
+from unittest.mock import patch
 
 @pytest.fixture
-def client():
-    return TestClient(app)
-
-def test_create_event_success(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
+def event_data():
+    return {
+        "event_code": "123",
+        "customer_id": "456",
+        "transaction_id": "789",
+        "merchant_id": "101112",
         "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
         "event_data": {"key": "value"},
-        "transaction_date": datetime.now()
+        "status": "success",
+        "matched_rule_id": 1,
+        "error_message": None,
+        "created_at": "2022-01-01T00:00:00",
+        "recorded_at": "2022-01-01T00:00:00",
+        "processed_at": None,
+        "channel": "web"
     }
+
+def test_create_event_success(client: TestClient, event_data):
     response = client.post("/events", json=event_data)
     assert response.status_code == 200
-    assert response.json() == {"status": "success"}
+    assert response.json()["event_code"] == event_data["event_code"]
 
-@patch("api_server.httpx.AsyncClient")
-def test_create_event_http_error(mock_client, client):
-    mock_response = MagicMock()
-    mock_response.raise_for_status.side_effect = Exception("HTTP Error")
-    mock_client.return_value.post.return_value = mock_response
-
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "event_data": {"key": "value"},
-        "transaction_date": datetime.now()
-    }
+def test_create_event_missing_channel(client: TestClient, event_data):
+    del event_data["channel"]
     response = client.post("/events", json=event_data)
-    assert response.status_code == 500
-    assert response.json() == {"error": "Internal Server Error"}
+    assert response.status_code == 422
+
+def test_create_event_invalid_channel(client: TestClient, event_data):
+    event_data["channel"] = 123
+    response = client.post("/events", json=event_data)
+    assert response.status_code == 422
+
+@patch("app.execute_insert_query")
+def test_create_event_insert_query(mock_execute_insert_query, client: TestClient, event_data):
+    client.post("/events", json=event_data)
+    mock_execute_insert_query.assert_called_once()

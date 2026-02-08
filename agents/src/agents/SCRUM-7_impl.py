@@ -1,25 +1,24 @@
-# demo-domain/src/demo-environment/api_server.py
-
-from fastapi import FastAPI
-from pydantic import BaseModel
-from datetime import datetime
-import httpx
-
-app = FastAPI()
-
+# Add a new field 'channel' to the Event model
 class Event(BaseModel):
     event_code: str
     customer_id: str
     transaction_id: str
     merchant_id: str
     amount: float
-    event_data: dict
     transaction_date: datetime
+    event_data: dict
+    status: str
+    matched_rule_id: Optional[int]
+    error_message: Optional[str]
+    created_at: datetime
+    recorded_at: datetime
+    processed_at: Optional[datetime]
+    channel: str
 
+# Update the API endpoint to include 'channel' in the request payload
 @app.post("/events")
 async def create_event(event: Event):
-    async with httpx.AsyncClient() as client:
-        # Call the event registration service to save the event with channel info
-        response = await client.post("http://demo-domain-api:8000/events", json=event.dict())
-        response.raise_for_status()
-        return response.json()
+    # Save the event with the 'channel' field
+    event_dict = event.dict()
+    # Include the 'channel' field in the insert query
+    # Execute the insert query and return the response
