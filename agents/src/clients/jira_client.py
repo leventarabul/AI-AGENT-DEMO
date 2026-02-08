@@ -102,6 +102,7 @@ class JiraClient:
     async def transition_issue(self, issue_key: str, transition_id: str, comment: Optional[str] = None) \
     \
     \
+    \
     -> None:
         """Transition issue to a new status."""
         url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/transitions"
