@@ -1,10 +1,8 @@
-# agents/src/clients/demo_domain_client.py
-
-from typing import Optional
+# models/event.py
 from pydantic import BaseModel
-import httpx
+from typing import Optional
 
-class EventRequest(BaseModel):
+class Event(BaseModel):
     event_code: str
     customer_id: str
     transaction_id: str
@@ -14,31 +12,24 @@ class EventRequest(BaseModel):
     event_data: Optional[dict] = None
     channel: Optional[str] = None
 
-async def register_event(event: EventRequest, base_url: str, auth: tuple):
-    async with httpx.AsyncClient(timeout=30) as client:
-        url = f"{base_url}/events"
-        resp = await client.post(url, json=event.dict(), auth=auth)
-        resp.raise_for_status()
-
-# demo-domain/src/demo-environment/api_server.py
-
+# api_server.py
 from fastapi import FastAPI
-from agents.src.clients.demo_domain_client import register_event, EventRequest
+from models.event import Event
 
 app = FastAPI()
 
 @app.post("/events")
-async def create_event(event: EventRequest):
-    # Process event
-    await register_event(event, DEMO_DOMAIN_URL, (API_USERNAME, API_PASSWORD))
-    return {"message": "Event registered successfully"}
+async def create_event(event: Event):
+    # Save event to database with channel info
+    event_dict = event.dict()
+    event_dict.pop("channel")
+    # Save event_dict and event.channel to database
+    return {"status": "Event created successfully"}
 
-# demo-domain/src/demo-environment/init.sql
+# database.py
+import asyncpg
 
-ALTER TABLE events
-ADD COLUMN channel VARCHAR;
-
-# demo-domain/src/demo-environment/requirements.txt
-
-httpx
-pydantic
+async def save_event(event_dict, channel):
+    conn = await asyncpg.connect(user='admin', password='admin123', database='crm_demo', host='localhost')
+    await conn.execute("INSERT INTO events (event_data, channel) VALUES ($1, $2)", event_dict, channel)
+    await conn.close()
