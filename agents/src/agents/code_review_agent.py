@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Code review agent: Hardened implementation for SDLC pipeline.
 
 Reviews code changes against architecture rules, coding standards, and edge cases.
@@ -11,7 +13,7 @@ import subprocess
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
 
 
@@ -46,13 +48,48 @@ class CodeReviewResult:
     error: Optional[str] = None
 
 
+def format_review_comment(result: CodeReviewResult) -> str:
+    """Format a Jira comment summarizing code review results."""
+    decision = result.decision.value if result.decision else "UNKNOWN"
+    header = f"**Code Review Result:** {decision}"
+    reasoning = result.reasoning or ""
+
+    issues = result.issues or []
+    by_file: Dict[str, List[ReviewIssue]] = {}
+    for issue in issues:
+        key = issue.file_path or "unknown"
+        by_file.setdefault(key, []).append(issue)
+
+    lines = [header]
+    lines.append("**Checks:**")
+    lines.append("- Architecture: no print(), no hardcoded paths")
+    lines.append("- Standards: line length, bare except, wildcard imports")
+    lines.append("- Edge cases: direct list indexing")
+    if reasoning:
+        lines.append(f"**Reasoning:** {reasoning}")
+
+    if issues:
+        lines.append(f"**Issues ({len(issues)}):**")
+        for file_path, file_issues in by_file.items():
+            lines.append(f"- {file_path}")
+            for issue in file_issues[:5]:
+                loc = f"L{issue.line_number}" if issue.line_number else ""
+                lines.append(f"  - [{issue.severity}] {issue.category} {loc}: {issue.message}")
+            if len(file_issues) > 5:
+                lines.append(f"  - ... {len(file_issues) - 5} more issue(s)")
+    else:
+        lines.append("**Issues:** None")
+
+    return "\n".join(lines)
+
+
 class ArchitectureRules:
     """Architecture rules for the project."""
     
     RULES = {
         "no_print_statements": {
             "pattern": r"print\(",
-            "message": "Direct print() calls not allowed; use logging",
+            "message": "Direct logger.info() calls not allowed; use logging",
         },
         "no_hardcoded_paths": {
             "pattern": r'["\']/(app|root|home)/\w+',
@@ -107,7 +144,8 @@ class CodeReviewAgent:
             reasoning = self._generate_reasoning(
                 decision, architecture_violations, standard_violations, edge_cases
             )
-            approval_notes = "Code review passed. Ready for testing." if decision == ReviewDecision.APPROVE else None
+            approval_notes = "Code review passed. Ready for testing." if decision == ReviewDecision.APPROVE \
+            else None
             
             return CodeReviewResult(
                 success=True,
@@ -126,6 +164,33 @@ class CodeReviewAgent:
                 decision=ReviewDecision.BLOCK,
                 error=str(e),
             )
+
+    async def review_pull_request(
+        self,
+        issue_key: str,
+        code_files: List[Tuple[str, str]],
+    ) -> CodeReviewResult:
+        """Review a pull request based on provided file contents.
+
+        Args:
+            issue_key: Jira issue key (for context/logging)
+            code_files: List of (file_path, content) tuples
+
+        Returns:
+            CodeReviewResult
+        """
+        code_changes: Dict[str, str] = {}
+
+        for file_path, content in code_files:
+            if file_path and content is not None:
+                code_changes[file_path] = content
+
+        context = {
+            "jira_issue_key": issue_key,
+            "code_changes": code_changes,
+        }
+
+        return self.execute(context)
     
     def _review_file(self, file_path: str, content: str) -> List[ReviewIssue]:
         """Review a single file."""
