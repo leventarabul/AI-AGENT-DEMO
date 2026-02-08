@@ -567,7 +567,11 @@ class JiraAgent:
         for failure in result.failures[:5]:
             loc = f" ({failure.file_path})" if failure.file_path else ""
             failure_lines.append(f"- {failure.test_name}{loc}: {failure.error_message}")
-        details = "\n".join(failure_lines) if failure_lines else result.summary
+        details = "\n".join(failure_lines)
+        if not details:
+            raw = (getattr(result, "raw_output", "") or "").strip()
+            raw_tail = "\n".join(raw.splitlines()[-40:]) if raw else result.summary
+            details = f"Test output (tail):\n{raw_tail}"
 
         await self.jira_client.add_comment(
             issue_key,

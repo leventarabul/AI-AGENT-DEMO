@@ -346,7 +346,12 @@ async def _run_tests_in_background(issue_key: str, test_files: List[str] = None)
                     ["Done", "Completed", "Resolved"],
                 )
             else:
-                await jira_client.add_comment(issue_key, f"❌ Tests failed: {summary}")
+                raw = (getattr(result, "raw_output", "") or "").strip()
+                raw_tail = "\n".join(raw.splitlines()[-40:]) if raw else summary
+                await jira_client.add_comment(
+                    issue_key,
+                    f"❌ Tests failed: {summary}\nTest output (tail):\n{raw_tail}",
+                )
                 await _transition_issue_to_status(
                     jira_client,
                     issue_key,
