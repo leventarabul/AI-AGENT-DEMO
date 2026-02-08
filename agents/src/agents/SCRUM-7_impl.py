@@ -1,37 +1,31 @@
+# demo-domain/api_server.py
+
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from datetime import datetime
 import httpx
 
 app = FastAPI()
 
-DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
-AI_MANAGEMENT_URL = "http://ai-management-service:8001"
+class Event(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: datetime
+    event_data: dict
+    channel: str
 
 @app.post("/events")
-async def create_event(event_data: dict):
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            response = await client.post(f"{DEMO_DOMAIN_URL}/events", json=event_data)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
+async def create_event(event: Event):
+    # Call ai-management service to generate suggestion
+    async with httpx.AsyncClient() as client:
+        response = await client.post("http://ai-management:8001/generate", json={"prompt": f"Channel: {event.channel}"})
+        response.raise_for_status()
+        suggestion = response.json()["suggestion"]
 
-@app.post("/events/{event_id}/process")
-async def process_event(event_id: int):
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            response = await client.post(f"{DEMO_DOMAIN_URL}/events/{event_id}/process")
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
-
-@app.post("/ai/generate")
-async def generate_suggestion(prompt: str):
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            response = await client.post(f"{AI_MANAGEMENT_URL}/generate", json={"prompt": prompt})
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
+    # Save event with channel information
+    # Replace this with actual DB saving logic
+    event_info = f"Event saved with channel: {event.channel}"
+    return {"message": event_info, "suggestion": suggestion}
