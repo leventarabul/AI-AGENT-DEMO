@@ -5,7 +5,10 @@ import logging
 import aiohttp
 from typing import Optional
 
-from .base_client import BaseLLMClient, LLMResponse
+try:
+    from .base_client import BaseLLMClient, LLMResponse
+except ImportError:
+    from base_client import BaseLLMClient, LLMResponse
 
 logger = logging.getLogger(__name__)
 

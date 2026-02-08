@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import logging
+from dataclasses import asdict, is_dataclass
 from typing import Optional
 import redis
 import redis.asyncio as aioredis
@@ -71,6 +72,12 @@ class CacheManager:
             return False
         
         try:
+            if is_dataclass(response):
+                response = asdict(response)
+            elif hasattr(response, "dict") and callable(getattr(response, "dict")):
+                response = response.dict()
+            elif hasattr(response, "__dict__") and not isinstance(response, dict):
+                response = dict(response.__dict__)
             key = self._generate_key(prompt, provider, model)
             ttl = ttl or self.ttl
             
