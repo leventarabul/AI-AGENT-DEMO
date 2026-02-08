@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.clients.jira_client import JiraClient
 from src.agents.development_agent import DevelopmentAgent
 from src.agents.code_review_agent import CodeReviewAgent, format_review_comment
-from src.agents.testing_agent import TestingAgent, TestStatus
+from src.agents.testing_agent import TestingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -209,24 +209,36 @@ async def run_mvp_jira_flow(
     # 3) TestingAgent
     testing_agent = TestingAgent(repo_root=os.getenv("GIT_REPO_PATH", "."))
     testing_result = testing_agent.execute({"test_path": "tests/"})
-    if not testing_result.success:
-        errors.append(testing_result.error or "Testing failed")
+    testing_success = bool(testing_result.get("success"))
+    testing_summary_text = testing_result.get("summary", "Testing completed")
+    failed_tests = testing_result.get("failed_tests", [])
+
+    if not testing_success:
+        errors.append(testing_summary_text or "Testing failed")
 
     logger.info(
-        "Testing completed for %s (success=%s, status=%s)",
+        "Testing completed for %s (success=%s)",
         issue_key,
-        testing_result.success,
-        testing_result.status,
+        testing_success,
     )
 
-    testing_summary = (
-        f"Test summary: status={testing_result.status.value}, "
-        f"passed={testing_result.passed_count}, failed={testing_result.failed_count}, "
-        f"summary='{testing_result.summary}'"
-    )
-    await _add_jira_comment(jira_client, issue_key, testing_summary, dry_run)
+    if testing_success:
+        testing_comment = f"Test summary: {testing_summary_text}"
+    else:
+        top_failures = failed_tests[:5]
+        failure_lines = [
+            f"- {f.get('test_name')}: {f.get('error_message')}"
+            for f in top_failures
+        ]
+        failures_block = "\n".join(failure_lines) if failure_lines else "- None"
+        testing_comment = (
+            f"Test summary: {testing_summary_text}\n"
+            f"Failed tests (top 5):\n{failures_block}"
+        )
 
-    completed = testing_result.success and testing_result.status == TestStatus.PASS
+    await _add_jira_comment(jira_client, issue_key, testing_comment, dry_run)
+
+    completed = testing_success
     if completed:
         transitioned = await _transition_issue_to_done(jira_client, issue_key, dry_run)
         if not transitioned:

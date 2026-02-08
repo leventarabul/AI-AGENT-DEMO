@@ -4,7 +4,7 @@ Executes real tests (pytest), captures results, and reports deterministic outcom
 Provides two-level results: PASS or FAIL.
 
 No code modification. No inter-agent calls.
-Structured, deterministic output.
+Structured, deterministic output (dict).
 """
 
 import subprocess
@@ -58,7 +58,7 @@ class TestingAgent:
         """
         self.repo_root = repo_root or os.getcwd()
     
-    def execute(self, context: Dict[str, Any]) -> TestResult:
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute tests and return structured results.
         
         Args:
@@ -77,16 +77,51 @@ class TestingAgent:
             
             # Execute pytest
             result = self._run_pytest(test_files, test_path, pytest_args)
-            
-            return result
+
+            return self._to_structured_result(result)
             
         except Exception as e:
-            return TestResult(
-                success=False,
-                status=TestStatus.FAIL,
-                error=f"Test execution error: {str(e)}",
-                summary="Test execution failed due to internal error",
+            return self._to_structured_result(
+                TestResult(
+                    success=False,
+                    status=TestStatus.FAIL,
+                    error=f"Test execution error: {str(e)}",
+                    summary="Test execution failed due to internal error",
+                )
             )
+
+    def _to_structured_result(self, result: TestResult) -> Dict[str, Any]:
+        """Convert TestResult into a machine-readable structured dict."""
+        failed_tests = [
+            {
+                "test_name": failure.test_name,
+                "error_message": failure.error_message,
+                "file_path": failure.file_path,
+                "line_number": failure.line_number,
+            }
+            for failure in result.failures
+        ]
+
+        evidence = {
+            "status": result.status.value,
+            "counts": {
+                "total": result.test_count,
+                "passed": result.passed_count,
+                "failed": result.failed_count,
+                "skipped": result.skipped_count,
+            },
+            "duration_seconds": result.duration_seconds,
+            "coverage_percent": result.coverage_percent,
+            "raw_output": result.raw_output,
+            "error": result.error,
+        }
+
+        return {
+            "success": result.success,
+            "summary": result.summary,
+            "failed_tests": failed_tests,
+            "evidence": evidence,
+        }
     
     def _run_pytest(
         self,

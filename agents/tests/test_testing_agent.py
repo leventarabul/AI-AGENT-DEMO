@@ -1,7 +1,7 @@
 """Test suite for hardened TestingAgent.
 
 Validates:
-- Execute method returns structured TestResult
+- Execute method returns structured dict
 - PASS/FAIL status is correctly determined
 - Test counts are parsed accurately
 - Failures are extracted properly
@@ -26,14 +26,11 @@ def test_execute_method_signature():
     result = agent.execute(context)
     
     # Verify result structure
-    assert isinstance(result, TestResult), "execute() must return TestResult"
-    assert hasattr(result, 'success'), "TestResult must have success field"
-    assert hasattr(result, 'status'), "TestResult must have status field"
-    assert hasattr(result, 'test_count'), "TestResult must have test_count field"
-    assert hasattr(result, 'passed_count'), "TestResult must have passed_count field"
-    assert hasattr(result, 'failed_count'), "TestResult must have failed_count field"
-    assert hasattr(result, 'failures'), "TestResult must have failures field"
-    assert hasattr(result, 'summary'), "TestResult must have summary field"
+    assert isinstance(result, dict), "execute() must return a structured dict"
+    assert "success" in result, "Result must include success field"
+    assert "summary" in result, "Result must include summary field"
+    assert "failed_tests" in result, "Result must include failed_tests field"
+    assert "evidence" in result, "Result must include evidence field"
     
     print("✓ test_execute_method_signature passed")
 
@@ -182,8 +179,9 @@ def test_error_handling():
     result = agent.execute(context)
     
     # Should return a valid result (even if no tests found)
-    assert isinstance(result, TestResult), "Should return TestResult"
-    assert result.status in [TestStatus.PASS, TestStatus.FAIL], "Should have valid status"
+    assert isinstance(result, dict), "Should return structured dict"
+    assert "success" in result, "Result should include success"
+    assert "summary" in result, "Result should include summary"
     
     print("✓ test_error_handling passed")
 
