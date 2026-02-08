@@ -51,7 +51,7 @@ class CodeReviewResult:
 def format_review_comment(result: CodeReviewResult) -> str:
     """Format a Jira comment summarizing code review results."""
     decision = result.decision.value if result.decision else "UNKNOWN"
-    header = f"**Code Review نتیجه:** {decision}"
+    header = f"**Code Review Result:** {decision}"
     reasoning = result.reasoning or ""
 
     issues = result.issues or []
