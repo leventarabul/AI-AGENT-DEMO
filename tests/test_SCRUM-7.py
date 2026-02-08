@@ -1,73 +1,43 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
-from main import app, Event
+from httpx import HTTPStatusError, RequestError, TimeoutException
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def mock_httpx_client():
+    return AsyncMock()
 
 @pytest.mark.asyncio
-async def test_create_event(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response_data = {"message": "Event created successfully"}
+async def test_create_event_success(mock_httpx_client):
+    mock_httpx_client.post.return_value.json.return_value = {"id": 1}
     
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client = MockClient.return_value
-        mock_client.post.return_value.json.return_value = response_data
-        response = await client.post("/events", json=event_data)
-        
-        assert response.status_code == 200
-        assert response.json() == response_data
-
-@pytest.mark.asyncio
-async def test_create_event_http_error(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
+    event_data = {"name": "Test Event"}
+    result = await create_event(event_data, client=mock_httpx_client)
     
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client = MockClient.return_value
-        mock_client.post.side_effect = httpx.HTTPStatusError(response=httpx.Response(400, json={"detail": "Bad request"}))
-        response = await client.post("/events", json=event_data)
-        
-        assert response.status_code == 400
-        assert response.json() == {"detail": "Bad request"}
+    assert result == 1
 
 @pytest.mark.asyncio
-async def test_trigger_job(client):
-    response_data = {"message": "Job triggered successfully"}
-
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client = MockClient.return_value
-        mock_client.post.return_value.json.return_value = response_data
-        response = await client.post("/admin/jobs/process-events")
-        
-        assert response.status_code == 200
-        assert response.json() == response_data
+async def test_create_event_http_error(mock_httpx_client):
+    mock_httpx_client.post.side_effect = HTTPStatusError(response=Mock(status_code=404))
+    
+    event_data = {"name": "Test Event"}
+    result = await create_event(event_data, client=mock_httpx_client)
+    
+    assert result is None
 
 @pytest.mark.asyncio
-async def test_trigger_job_http_error(client):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client = MockClient.return_value
-        mock_client.post.side_effect = httpx.HTTPStatusError(response=httpx.Response(500, json={"detail": "Internal server error"}))
-        response = await client.post("/admin/jobs/process-events")
-        
-        assert response.status_code == 500
-        assert response.json() == {"detail": "Internal server error"}
+async def test_create_event_request_error(mock_httpx_client):
+    mock_httpx_client.post.side_effect = RequestError()
+    
+    event_data = {"name": "Test Event"}
+    result = await create_event(event_data, client=mock_httpx_client)
+    
+    assert result is None
+
+@pytest.mark.asyncio
+async def test_create_event_timeout_error(mock_httpx_client):
+    mock_httpx_client.post.side_effect = TimeoutException()
+    
+    event_data = {"name": "Test Event"}
+    result = await create_event(event_data, client=mock_httpx_client)
+    
+    assert result is None

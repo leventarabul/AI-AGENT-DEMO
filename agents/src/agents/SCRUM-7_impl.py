@@ -1,39 +1,26 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+# agents/src/clients/demo_domain_client.py
+
 import httpx
+from typing import Optional
 
-app = FastAPI()
+DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
 
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: str
-    event_data: dict
-    channel: str  # New field for channel information
-
-@app.post("/events")
-async def create_event(event: Event):
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("http://demo-domain-api:8000/events", json=event.dict(), auth=("admin", "admin123"))
+async def create_event(event_data: dict) -> Optional[int]:
+    async with httpx.AsyncClient() as client:
+        url = f"{DEMO_DOMAIN_URL}/events"
+        headers = {"Content-Type": "application/json"}
+        try:
+            response = await client.post(url, json=event_data, headers=headers)
             response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.json()["detail"])
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail="Error communicating with demo-domain API")
+            event = response.json()
+            return event.get("id")
+        except httpx.HTTPStatusError as e:
+            # Handle HTTP errors
+            print(f"HTTP error: {e}")
+            return None
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            # Handle request errors
+            print(f"Request error: {e}")
+            return None
 
-@app.post("/admin/jobs/process-events")
-async def trigger_job():
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("http://demo-domain-api:8000/admin/jobs/process-events", auth=("admin", "admin123"))
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=e.response.json()["detail"])
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail="Error communicating with demo-domain API")
+# Add any necessary error handling and logging
