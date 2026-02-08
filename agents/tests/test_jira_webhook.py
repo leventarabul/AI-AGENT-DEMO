@@ -3,11 +3,11 @@
 import os
 import sys
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from ai_server import JiraWebhookRequest, jira_webhook, TARGET_STATUS, run_mvp_jira_flow
+from ai_server import JiraWebhookRequest, jira_webhook, TARGET_STATUS
 
 
 def test_jira_webhook_skipped_when_status_not_target():
@@ -39,10 +39,11 @@ def test_jira_webhook_accepted_when_status_matches_target():
     background_tasks = MagicMock()
     background_tasks.add_task = MagicMock()
 
-    result = asyncio.run(jira_webhook(request, background_tasks))
+    with patch("ai_server.run_mvp_jira_flow") as flow_mock:
+        result = asyncio.run(jira_webhook(request, background_tasks))
 
     assert result["status"] == "accepted"
     assert result["issue_key"] == "ABC-2"
     background_tasks.add_task.assert_called_once()
     called_args = background_tasks.add_task.call_args[0]
-    assert called_args[0] is run_mvp_jira_flow
+    assert called_args[0] is flow_mock
