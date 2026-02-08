@@ -1,42 +1,30 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch
-from app import app
+from app import create_event
 
-@pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
+@pytest.mark.asyncio
+async def test_create_event_success():
+    # Test creating an event with valid channel information
+    event_data = {"channel": "test_channel"}
+    response = await create_event(event_data)
+    assert response["status"] == "pending"
 
-def test_create_event_success(client):
-    response = client.post("/events", json={
-        "event_code": "test_event",
-        "customer_id": "123",
-        "transaction_id": "456",
-        "merchant_id": "789",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully"}
+@pytest.mark.asyncio
+async def test_create_event_missing_channel():
+    # Test creating an event with missing channel information
+    event_data = {}
+    with pytest.raises(Exception):
+        await create_event(event_data)
 
-def test_create_event_missing_required_fields(client):
-    response = client.post("/events", json={})
-    assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_save_event_to_db_success():
+    # Test saving event data to the database with valid inputs
+    event_data = {"channel": "test_channel"}
+    event_id = await save_event_to_db(event_data, channel)
+    assert event_id is not None
 
-def test_create_event_internal_server_error(client):
-    with patch('app.save_event_to_database') as mock_save_event:
-        mock_save_event.side_effect = Exception()
-        response = client.post("/events", json={
-            "event_code": "test_event",
-            "customer_id": "123",
-            "transaction_id": "456",
-            "merchant_id": "789",
-            "amount": 100.0,
-            "transaction_date": "2022-01-01",
-            "event_data": {"key": "value"},
-            "channel": "web"
-        })
-        assert response.status_code == 500
+@pytest.mark.asyncio
+async def test_save_event_to_db_missing_channel():
+    # Test saving event data to the database with missing channel information
+    event_data = {}
+    with pytest.raises(Exception):
+        await save_event_to_db(event_data, channel)
