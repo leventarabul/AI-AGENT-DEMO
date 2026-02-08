@@ -1,71 +1,39 @@
-# demo-domain/tests/test_api_server.py
+# test_demo_domain_client.py
 
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-from api_server import app
+from httpx import AsyncClient
+from unittest.mock import patch
+from clients.demo_domain_client import create_event
 
 @pytest.fixture
-def client():
-    client = TestClient(app)
-    return client
+def event_data():
+    return {
+        "event_code": "123",
+        "customer_id": "456",
+        "transaction_id": "789",
+        "merchant_id": "101112",
+        "amount": 50.0,
+        "transaction_date": "2022-01-01",
+        "event_data": {}
+    }
 
-def test_create_event_success(client):
-    response = client.post("/events", json={
-        "event_code": "test_event",
-        "customer_id": "123",
-        "transaction_id": "456",
-        "merchant_id": "789",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 200
-    assert response.json() == {"status": "pending", "message": "Event created successfully"}
+@pytest.mark.asyncio
+async def test_create_event_success(event_data):
+    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.post.return_value.json.return_value = {"status": "success"}
+        response = await create_event(event_data)
+        assert response == {"status": "success"}
 
-@patch('api_server.httpx.AsyncClient')
-def test_create_event_error(mock_client, client):
-    mock_client.return_value.post.side_effect = Exception("Mocked error")
-    response = client.post("/events", json={
-        "event_code": "test_event",
-        "customer_id": "123",
-        "transaction_id": "456",
-        "merchant_id": "789",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Internal Server Error"}
+@pytest.mark.asyncio
+async def test_create_event_add_channel(event_data):
+    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.post.return_value.json.return_value = {"status": "success"}
+        response = await create_event(event_data)
+        assert response["event_data"]["channel"] == "web"
 
-@patch('api_server.httpx.AsyncClient')
-def test_create_event_http_error(mock_client, client):
-    mock_response = MagicMock()
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("Mocked HTTP error")
-    mock_client.return_value.post.return_value = mock_response
-    response = client.post("/events", json={
-        "event_code": "test_event",
-        "customer_id": "123",
-        "transaction_id": "456",
-        "merchant_id": "789",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    })
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Error calling ai-management service"}
-
-def test_create_event_missing_field(client):
-    response = client.post("/events", json={
-        "event_code": "test_event",
-        "customer_id": "123",
-        "transaction_id": "456",
-        "merchant_id": "789",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {"key": "value"}
-    })
-    assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_create_event_error(event_data):
+    with patch("clients.demo_domain_client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.post.side_effect = Exception("Connection error")
+        with pytest.raises(Exception):
+            await create_event(event_data)

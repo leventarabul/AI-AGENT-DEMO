@@ -1,9 +1,21 @@
+# agents/src/clients/demo_domain_client.py
+
+import httpx
+
+DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
+
+async def create_event(event_data: dict):
+    async with httpx.AsyncClient(timeout=30) as client:
+        url = f"{DEMO_DOMAIN_URL}/events"
+        headers = {"Content-Type": "application/json"}
+        response = await client.post(url, json=event_data, headers=headers, auth=("admin", "admin123"))
+        response.raise_for_status()
+        return response.json()
+
 # demo-domain/src/demo-environment/api_server.py
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
-import httpx
 
 app = FastAPI()
 
@@ -13,21 +25,16 @@ class Event(BaseModel):
     transaction_id: str
     merchant_id: str
     amount: float
-    transaction_date: datetime
+    transaction_date: str
     event_data: dict
-    channel: str
 
 @app.post("/events")
 async def create_event(event: Event):
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("http://ai-management-service:8001/events", json={"channel": event.channel})
-            response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=500, detail="Error calling ai-management service")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal Server Error")
-    return {"status": "pending", "message": "Event created successfully"}
-
-# Update the database schema to include the `channel` field in the events table
-# Update the data model and request payload accordingly
+    # Add channel information to event data
+    event.event_data["channel"] = "web"
+    
+    # Save event to demo-domain
+    event_data = event.dict()
+    event_response = await create_event(event_data)
+    
+    return event_response
