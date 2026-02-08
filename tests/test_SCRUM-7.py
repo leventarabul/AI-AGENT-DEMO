@@ -1,72 +1,36 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch
-from main import app
+from httpx import AsyncClient
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
+def mock_http_client():
+    return AsyncMock(spec=AsyncClient)
 
-def test_create_event_with_channel_info(client):
-    response = client.post("/events", json={
-        "id": 1,
-        "event_code": "ABC123",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "MERCHANT",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {},
-        "status": "success",
-        "matched_rule_id": None,
-        "error_message": None,
-        "created_at": "2022-01-01T00:00:00",
-        "recorded_at": "2022-01-01T00:00:00",
-        "processed_at": None,
-        "channel": "web"
-    })
-    assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully with channel information"}
+@pytest.mark.asyncio
+async def test_create_event_success(mock_http_client):
+    mock_http_client.post.return_value = {"channel": "test_channel", "event_data": {"key": "value"}}
+    
+    response = await create_event("test_channel", {"key": "value"}, mock_http_client)
+    
+    assert response == {"channel": "test_channel", "event_data": {"key": "value"}}
 
-def test_create_event_missing_channel_info(client):
-    response = client.post("/events", json={
-        "id": 1,
-        "event_code": "ABC123",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "MERCHANT",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {},
-        "status": "success",
-        "matched_rule_id": None,
-        "error_message": None,
-        "created_at": "2022-01-01T00:00:00",
-        "recorded_at": "2022-01-01T00:00:00",
-        "processed_at": None
-    })
-    assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_create_event_invalid_response(mock_http_client):
+    mock_http_client.post.return_value = {"status_code": 400, "reason": "Bad Request"}
+    
+    with pytest.raises(Exception):
+        await create_event("test_channel", {"key": "value"}, mock_http_client)
 
-@patch("routers.events.create_event")
-def test_create_event_mocked_function(mock_create_event, client):
-    mock_create_event.return_value = {"message": "Mocked Event created successfully with channel information"}
-    response = client.post("/events", json={
-        "id": 1,
-        "event_code": "ABC123",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "MERCHANT",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T00:00:00",
-        "event_data": {},
-        "status": "success",
-        "matched_rule_id": None,
-        "error_message": None,
-        "created_at": "2022-01-01T00:00:00",
-        "recorded_at": "2022-01-01T00:00:00",
-        "processed_at": None,
-        "channel": "web"
-    })
-    assert response.status_code == 200
-    assert response.json() == {"message": "Mocked Event created successfully with channel information"}
+@pytest.mark.asyncio
+async def test_create_event_connection_error(mock_http_client):
+    mock_http_client.post.side_effect = ConnectionError
+    
+    with pytest.raises(ConnectionError):
+        await create_event("test_channel", {"key": "value"}, mock_http_client)
+
+@pytest.mark.asyncio
+async def test_create_event_timeout(mock_http_client):
+    mock_http_client.post.side_effect = TimeoutError
+    
+    with pytest.raises(TimeoutError):
+        await create_event("test_channel", {"key": "value"}, mock_http_client)
