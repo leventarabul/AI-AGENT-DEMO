@@ -1,33 +1,71 @@
+# demo-domain/tests/test_api_server.py
+
 import pytest
-from unittest.mock import AsyncMock
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from api_server import app
 
 @pytest.fixture
-def mock_httpx_client():
-    return AsyncMock()
+def client():
+    client = TestClient(app)
+    return client
 
-@pytest.mark.asyncio
-async def test_register_event_successful(mock_httpx_client):
-    mock_httpx_client.post.return_value = AsyncMock(status_code=200)
-    
-    await register_event("test_channel", {"key": "value"})
-    
-    mock_httpx_client.post.assert_called_once()
-
-@pytest.mark.asyncio
-async def test_create_event_successful():
-    event_data = {"key": "value"}
-    response = await client.post("/events", json={"channel": "test_channel", "event_data": event_data})
-    
+def test_create_event_success(client):
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"},
+        "channel": "web"
+    })
     assert response.status_code == 200
+    assert response.json() == {"status": "pending", "message": "Event created successfully"}
 
-@pytest.mark.asyncio
-async def test_create_event_invalid_data():
-    response = await client.post("/events", json={"channel": "test_channel"})
-    
-    assert response.status_code == 422
-
-@pytest.mark.asyncio
-async def test_create_event_error():
-    response = await client.post("/events", json={"channel": "test_channel", "event_data": {}})
-    
+@patch('api_server.httpx.AsyncClient')
+def test_create_event_error(mock_client, client):
+    mock_client.return_value.post.side_effect = Exception("Mocked error")
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"},
+        "channel": "web"
+    })
     assert response.status_code == 500
+    assert response.json() == {"detail": "Internal Server Error"}
+
+@patch('api_server.httpx.AsyncClient')
+def test_create_event_http_error(mock_client, client):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("Mocked HTTP error")
+    mock_client.return_value.post.return_value = mock_response
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"},
+        "channel": "web"
+    })
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Error calling ai-management service"}
+
+def test_create_event_missing_field(client):
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"}
+    })
+    assert response.status_code == 422
