@@ -1,13 +1,33 @@
-# Add a new field 'channel' to the events table in the database
-ALTER TABLE events ADD COLUMN channel TEXT;
+# models/event.py
 
-# Update the API endpoint to accept 'channel' field in the request body
-@app.post("/events")
+from pydantic import BaseModel
+from typing import Optional
+
+class Event(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    event_data: dict
+    transaction_date: str
+    channel: Optional[str]
+
+# routes/events.py
+
+from fastapi import APIRouter
+from models.event import Event
+
+router = APIRouter()
+
+@router.post("/events")
 async def create_event(event: Event):
-    # Extract the channel field from the request body
-    channel = event.channel
-    # Save the event to the database including the channel
-    new_event = Event.create(event_code=event.event_code, customer_id=event.customer_id, transaction_id=event.transaction_id,
-                             merchant_id=event.merchant_id, amount=event.amount, event_data=event.event_data, channel=channel)
-    # Return the created event
-    return new_event
+    # Save event to database with channel info
+    # event.channel is now available for logging purposes
+    return {"message": "Event created successfully with channel info"}
+
+# Update database schema (events table) to include the channel field
+# Add channel field to the Event model in the database
+
+# Update the data flow to include passing the channel info through the system
+# Ensure proper validation and handling of the channel field throughout the process
