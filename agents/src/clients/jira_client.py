@@ -151,3 +151,18 @@ class JiraClient:
             resp.raise_for_status()
             result = resp.json()
             return result.get("transitions", [])
+
+    async def get_comments(self, issue_key: str, max_results: int = 50) -> List[Dict[str, Any]]:
+        """Fetch comments for an issue."""
+        url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/comment"
+        params = {"maxResults": max_results}
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(
+                url,
+                params=params,
+                headers=self._auth_header,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            return result.get("comments", [])

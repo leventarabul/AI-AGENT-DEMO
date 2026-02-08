@@ -8,6 +8,9 @@ Complete campaign and event processing system with autonomous agents, built as i
 # Start all services
 docker compose up -d
 
+# Start log streaming (after services are up)
+docker compose logs -f
+
 # Check services
 docker compose ps
 

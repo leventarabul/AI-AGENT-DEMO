@@ -23,7 +23,7 @@ class JiraAgent:
         git_user_email: str = "agent@ai.local",
     ):
         self.jira_client = JiraClient(jira_url, jira_username, jira_token)
-        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL")
+        self.ai_management_url = ai_management_url or os.getenv("AI_MANAGEMENT_URL", "http://ai-management-service:8001")
         self.ai_client = AIManagementClient(self.ai_management_url)
         self.git_repo_path = git_repo_path or os.getenv("GIT_REPO_PATH") or os.getcwd()
         self.git_user_name = git_user_name
@@ -38,11 +38,22 @@ class JiraAgent:
         task_title = issue.get("fields", {}).get("summary", "")
         task_description = issue.get("fields", {}).get("description", {})
         task_labels = issue.get("fields", {}).get("labels", [])
+
+        # Fetch reviewer comments (for fix context)
+        comments = await self.jira_client.get_comments(issue_key)
+        reviewer_notes = self._format_reviewer_comments(comments)
         
         if isinstance(task_description, dict):
             task_description = self._extract_text_from_rich_text(task_description)
         if task_description is None:
             task_description = ""
+
+        if reviewer_notes:
+            task_description = (
+                f"{task_description}\n\n"
+                "Reviewer Comments:\n"
+                f"{reviewer_notes}"
+            )
         
         print(f"  Title: {task_title}")
         desc_preview = task_description[:100] + ("..." if len(task_description) > 100 else "")
@@ -74,8 +85,14 @@ class JiraAgent:
         pr_info = await self.create_pull_request(
             branch_name, task_title, task_description, issue_key
         )
+
+        # Step 4.5: Trigger deploy if configured
+        await self._trigger_deploy(issue_key, branch_name, commit_sha)
         
         # Step 5: Post development details as comment
+        await self._post_development_summary(
+            issue_key, task_title, generated_code, generated_tests, pr_info
+        )
         await self._post_development_details(
             issue_key, task_title, generated_code, generated_tests, pr_info
         )
@@ -201,11 +218,7 @@ class JiraAgent:
         # If repo is not a git repository, skip git operations
         is_git_repo = self._is_git_repo()
         if is_git_repo:
-            subprocess.run(
-                ["git", "checkout", "-b", branch_name],
-                cwd=self.git_repo_path,
-                check=True,
-            )
+            self._checkout_or_create_branch(branch_name)
         
         # Write code file
         code_path = os.path.join(self.git_repo_path, f"agents/src/agents/{issue_key}_impl.py")
@@ -222,39 +235,78 @@ class JiraAgent:
         commit_sha = "unknown"
         if is_git_repo:
             # Configure git
-            subprocess.run(
-                ["git", "config", "user.name", self.git_user_name],
-                cwd=self.git_repo_path,
-            )
-            subprocess.run(
-                ["git", "config", "user.email", self.git_user_email],
-                cwd=self.git_repo_path,
-            )
+            self._run_git(["config", "user.name", self.git_user_name])
+            self._run_git(["config", "user.email", self.git_user_email])
+
+            # Ensure remote supports auth if token is provided
+            self._configure_auth_remote()
             
             # Add and commit
-            subprocess.run(
-                ["git", "add", code_path, test_path],
-                cwd=self.git_repo_path,
-                check=True,
-            )
-            result = subprocess.run(
-                ["git", "commit", "-m", f"[{issue_key}] {task_title}"],
-                cwd=self.git_repo_path,
+            self._run_git(["add", code_path, test_path], check=True)
+            result = self._run_git(
+                ["commit", "-m", f"[{issue_key}] {task_title}"],
                 capture_output=True,
-                text=True,
             )
             
             commit_sha = result.stdout.split("(")[0].strip() if result.returncode == 0 else "unknown"
             
             # Push to remote
-            subprocess.run(
-                ["git", "push", "-u", "origin", branch_name],
-                cwd=self.git_repo_path,
-            )
+            self._run_git(["push", "-u", "origin", branch_name])
         else:
             print("  ⚠️ No git repo detected; files written without commit/push")
         
         return commit_sha
+
+    def _configure_auth_remote(self) -> None:
+        """Configure origin remote with token if provided."""
+        token = os.getenv("GITHUB_TOKEN") or os.getenv("GIT_TOKEN")
+        repo_url = os.getenv("GITHUB_REPO_URL") or os.getenv("GIT_REMOTE_URL")
+
+        if not token or not repo_url:
+            return
+
+        if repo_url.startswith("https://"):
+            auth_url = repo_url.replace(
+                "https://",
+                f"https://x-access-token:{token}@",
+                1,
+            )
+        else:
+            auth_url = repo_url
+
+        self._run_git(["remote", "set-url", "origin", auth_url], check=False)
+
+    def _checkout_or_create_branch(self, branch_name: str) -> None:
+        """Checkout existing branch or create it if missing."""
+        exists = self._run_git(
+            ["rev-parse", "--verify", f"refs/heads/{branch_name}"],
+            capture_output=True,
+            check=False,
+        ).returncode == 0
+
+        if exists:
+            self._run_git(["checkout", branch_name], check=True)
+            return
+
+        self._run_git(["checkout", "-b", branch_name], check=True)
+
+    async def _trigger_deploy(self, issue_key: str, branch_name: str, commit_sha: str) -> None:
+        """Trigger deployment webhook if configured."""
+        deploy_url = os.getenv("DEPLOY_WEBHOOK_URL")
+        if not deploy_url:
+            return
+
+        payload = {
+            "issue_key": issue_key,
+            "branch": branch_name,
+            "commit": commit_sha,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(deploy_url, json=payload)
+        except Exception as e:
+            print(f"  ⚠️ Deploy webhook failed: {e}")
     
     async def create_pull_request(
         self,
@@ -301,6 +353,38 @@ class JiraAgent:
                     if child.get("type") == "text":
                         texts.append(child.get("text", ""))
         return " ".join(texts)
+
+    def _format_reviewer_comments(self, comments: list) -> str:
+        """Format reviewer comments for prompt context."""
+        formatted = []
+        seen = set()
+        for comment in comments or []:
+            author = (comment.get("author") or {}).get("displayName", "")
+            if author and "ai agent" in author.lower():
+                continue
+            body = comment.get("body")
+            if isinstance(body, dict):
+                text = self._extract_text_from_rich_text(body)
+            else:
+                text = str(body or "")
+            text = text.strip()
+            if not text:
+                continue
+            lower_text = text.lower()
+            if (
+                "development details" in lower_text
+                or "development summary" in lower_text
+                or "ai agent completed development" in lower_text
+            ):
+                continue
+            normalized = " ".join(lower_text.split())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            formatted.append(f"- {author or 'Reviewer'}: {text}")
+            if len(formatted) >= 5:
+                break
+        return "\n".join(formatted)
     
     def _create_branch_name(self, issue_key: str, task_title: str) -> str:
         """Create a git branch name from issue key and title."""
@@ -387,6 +471,24 @@ class JiraAgent:
         comment += "3. Upon approval, code merges to main\n"
         
         await self.jira_client.add_comment(issue_key, comment)
+
+    async def _post_development_summary(
+        self,
+        issue_key: str,
+        task_title: str,
+        code: str,
+        tests: str,
+        pr_info: Dict[str, Any],
+    ) -> None:
+        """Post a short development summary as Jira comment."""
+        comment = (
+            "## ✅ Development Summary\n"
+            f"**Task:** {task_title}\n"
+            f"**PR:** {pr_info.get('html_url', 'N/A')}\n"
+            f"**Code Lines:** {len(code.split(chr(10)))}\n"
+            f"**Test Lines:** {len(tests.split(chr(10)))}\n"
+        )
+        await self.jira_client.add_comment(issue_key, comment)
         print(f"  📝 Development details posted to {issue_key}")
     
     def _extract_endpoints(self, code: str) -> list:
@@ -422,4 +524,28 @@ class JiraAgent:
 
     def _is_git_repo(self) -> bool:
         """Check if the configured path is a git repository."""
-        return os.path.isdir(os.path.join(self.git_repo_path, ".git"))
+        result = self._run_git(
+            ["rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def _run_git(
+        self,
+        args: list,
+        check: bool = False,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess:
+        """Run a git command in repo with safe env."""
+        return subprocess.run(
+            ["git"] + args,
+            cwd=self.git_repo_path,
+            check=check,
+            capture_output=capture_output,
+            text=True,
+            env={
+                **os.environ,
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
+            },
+        )

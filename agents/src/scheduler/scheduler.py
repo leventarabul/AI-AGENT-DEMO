@@ -311,8 +311,8 @@ class AgentScheduler:
             logger.info(f"  🧪 Testing {issue_key} with TestingAgent...")
             agent = TestingAgent(repo_root=self.git_repo_path)
             result = agent.execute({"test_files": None, "test_path": "tests/"})
-            status = result.get("evidence", {}).get("status")
-            summary = result.get("summary")
+            status = getattr(result, "status", None)
+            summary = getattr(result, "summary", None)
             logger.info(
                 f"  ✅ {issue_key} tested successfully: {status} ({summary})"
             )

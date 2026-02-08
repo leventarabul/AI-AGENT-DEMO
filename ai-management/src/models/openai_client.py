@@ -5,7 +5,10 @@ import logging
 import aiohttp
 from typing import Optional
 
-from .base_client import BaseLLMClient, LLMResponse
+try:
+    from .base_client import BaseLLMClient, LLMResponse
+except ImportError:
+    from base_client import BaseLLMClient, LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +19,7 @@ class OpenAIClient(BaseLLMClient):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gpt-4",
+        model: str = "gpt-3.5-turbo",
         temperature: float = 0.7
     ):
         api_key = api_key or os.getenv("OPENAI_API_KEY")

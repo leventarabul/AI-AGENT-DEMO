@@ -1,107 +1,127 @@
-import aiohttp
-import json
+"""OpenAI LLM Client Implementation"""
+
+import os
 import logging
-from typing import Dict, Any
-from base_client import BaseLLMClient
+import aiohttp
+from typing import Optional
+
+try:
+    from .base_client import BaseLLMClient, LLMResponse
+except ImportError:
+    from base_client import BaseLLMClient, LLMResponse
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAIClient(BaseLLMClient):
-    """OpenAI GPT client implementation."""
+    """OpenAI GPT Client"""
     
-    BASE_URL = "https://api.openai.com/v1"
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gpt-3.5-turbo",
+        temperature: float = 0.7
+    ):
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not provided")
+        
+        super().__init__(api_key, model, temperature)
+        self.base_url = "https://api.openai.com/v1"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
     
     async def generate(
         self,
         prompt: str,
         max_tokens: int = 1000,
-        temperature: float = 0.7,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Generate text using OpenAI API."""
+        temperature: Optional[float] = None,
+        system_prompt: Optional[str] = None,
+    ) -> LLMResponse:
+        """Generate text using OpenAI API"""
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key[:20]}...",  # Masked for logging
-            "Content-Type": "application/json"
-        }
+        import json
+        
+        temp = temperature if temperature is not None else self.temperature
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": temperature
+            "temperature": temp,
         }
         
-        # Print full request details
-        api_url = f"{self.BASE_URL}/chat/completions"
-        print("\n" + "="*100, flush=True)
-        print("🔗 OPENAI API URL:", flush=True)
-        print(api_url, flush=True)
-        print("\n📤 OPENAI REQUEST (JSON):", flush=True)
-        print(json.dumps(payload, indent=2, ensure_ascii=False), flush=True)
-        print("="*100 + "\n", flush=True)
+        # Log request
+        logger.info("\n" + "="*100)
+        logger.info("📤 OPENAI REQUEST")
+        logger.info("="*100)
+        logger.info(f"URL: POST {self.base_url}/chat/completions")
+        logger.info(f"\nPayload:\n{json.dumps(payload, indent=2)}")
+        logger.info("="*100)
         
-        async with aiohttp.ClientSession() as session:
-            try:
-                # Use real API key for actual request
-                headers["Authorization"] = f"Bearer {self.api_key}"
-                
+        try:
+            async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    api_url,
+                    f"{self.base_url}/chat/completions",
                     json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=60)
                 ) as response:
-                    response_data = await response.json() if response.content_type == 'application/json' else await response.text()
-                    
                     if response.status != 200:
-                        print("\n" + "="*100, flush=True)
-                        print(f"❌ OPENAI API ERROR ({response.status}):", flush=True)
-                        print(json.dumps(response_data, indent=2, ensure_ascii=False) if isinstance(response_data, dict) else response_data, flush=True)
-                        print("="*100 + "\n", flush=True)
-                        raise Exception(f"OpenAI API error: {json.dumps(response_data) if isinstance(response_data, dict) else response_data}")
+                        error_data = await response.json()
+                        logger.error(f"\n❌ OPENAI ERROR (HTTP {response.status}):\n{json.dumps(error_data, indent=2)}")
+                        raise Exception(f"OpenAI API error: {error_data}")
                     
-                    # Print full response
-                    print("\n" + "="*100, flush=True)
-                    print("📥 OPENAI RESPONSE (JSON):", flush=True)
-                    print(json.dumps(response_data, indent=2, ensure_ascii=False), flush=True)
-                    print("="*100 + "\n", flush=True)
+                    data = await response.json()
                     
-                    result = {
-                        "text": response_data["choices"][0]["message"]["content"],
-                        "model": self.model,
-                        "provider": "OpenAI",
-                        "token_count": response_data["usage"]["total_tokens"],
-                        "input_tokens": response_data["usage"]["prompt_tokens"],
-                        "output_tokens": response_data["usage"]["completion_tokens"]
-                    }
+                    # Log response
+                    logger.info("\n" + "="*100)
+                    logger.info("📥 OPENAI RESPONSE")
+                    logger.info("="*100)
+                    logger.info(f"Status: {response.status} OK")
+                    logger.info(f"\nFull Response:\n{json.dumps(data, indent=2)}")
+                    logger.info("="*100)
                     
-                    logger.info(f"✅ Generated: {result['text']}")
-                    return result
-            except Exception as e:
-                print(f"\n❌ Exception: {str(e)}\n", flush=True)
-                raise Exception(f"OpenAI generation failed: {str(e)}")
-
+                    text = data["choices"][0]["message"]["content"]
+                    logger.info(f"\n✅ Generated Text (first 500 chars):\n{text[:500]}")
+                    logger.info("="*100 + "\n")
+                    
+                    return LLMResponse(
+                        text=text,
+                        model=self.model,
+                        provider="openai",
+                        token_count=data["usage"]["total_tokens"],
+                        input_tokens=data["usage"]["prompt_tokens"],
+                        output_tokens=data["usage"]["completion_tokens"],
+                        stop_reason=data["choices"][0].get("finish_reason")
+                    )
+        
+        except Exception as e:
+            logger.error(f"\n❌ ERROR calling OpenAI API: {e}\n")
+            raise
     
-    async def count_tokens(self, text: str) -> int:
-        """Estimate token count (OpenAI: ~1 token per 4 chars)."""
+    def count_tokens(self, text: str) -> int:
+        """Approximate token count (rough estimate)"""
+        # Rough estimate: 1 token ≈ 4 characters
         return len(text) // 4
     
     async def validate_connection(self) -> bool:
-        """Validate OpenAI API connection."""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            try:
+        """Validate OpenAI API connection"""
+        try:
+            async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{self.BASE_URL}/models",
-                    headers=headers,
+                    f"{self.base_url}/models",
+                    headers=self.headers,
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     return response.status == 200
-            except:
-                return False
+        except Exception as e:
+            logger.error(f"Failed to validate OpenAI connection: {e}")
+            return False
