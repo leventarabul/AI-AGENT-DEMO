@@ -1,51 +1,49 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 @pytest.fixture
-def event_data():
-    return {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "10",
-        "amount": 100.0,
-        "transaction_date": datetime.now(),
-        "event_data": {"key": "value"},
-        "status": "success",
-        "matched_rule_id": None,
-        "error_message": None,
-        "created_at": datetime.now(),
-        "recorded_at": datetime.now(),
-        "processed_at": None,
-        "multiplier": 2
-    }
+def event():
+    return Event(
+        event_code="12345",
+        customer_id="67890",
+        transaction_id="abcde",
+        merchant_id="fghij",
+        amount=100.0,
+        transaction_date=datetime.now(),
+        event_data={"key": "value"},
+        status="pending",
+        created_at=datetime.now(),
+        recorded_at=datetime.now(),
+    )
 
 @pytest.fixture
-def ai_management_mock():
-    with patch('app.ai_management_client.get_suggestion') as mock:
-        mock.return_value = 10
-        yield mock
+def ai_management_client():
+    return MagicMock()
 
 @pytest.fixture
-def demo_domain_mock():
-    with patch('app.demo_domain_client.register_event') as mock:
-        mock.return_value = 12345
-        yield mock
+def demo_domain_client():
+    return MagicMock()
 
-@pytest.mark.asyncio
-async def test_register_event_success(event_data, ai_management_mock, demo_domain_mock):
-    response = await register_event(event_data)
-    assert response == {"event_id": 12345, "status": "pending"}
+def test_register_event_success(event, ai_management_client, demo_domain_client):
+    ai_management_client.get_suggestion.return_value = 50
+    demo_domain_client.register_event.return_value = "event_id"
+    demo_domain_client.create_earnings.return_value = True
 
-@pytest.mark.asyncio
-async def test_register_event_exception(event_data, ai_management_mock, demo_domain_mock):
-    demo_domain_mock.side_effect = Exception("Error registering event")
-    response = await register_event(event_data)
+    response = register_event(event)
+
+    assert response["event_id"] == "event_id"
+    assert response["status"] == "pending"
+
+def test_register_event_exception(event, ai_management_client, demo_domain_client):
+    ai_management_client.get_suggestion.side_effect = Exception("AI service not available")
+
+    response = register_event(event)
+
     assert response == {"error": "An error occurred while registering the event"}, 500
 
-@pytest.mark.asyncio
-async def test_register_event_earnings_calculation(event_data, ai_management_mock, \
-demo_domain_mock):
-    response = await register_event(event_data)
-    assert ai_management_mock.call_count == 1
-    assert demo_domain_mock.call_count == 1
+def test_register_event_earnings_amount(event, ai_management_client, demo_domain_client):
+    ai_management_client.get_suggestion.return_value = 50
+
+    response = register_event(event)
+
+    demo_domain_client.create_earnings.assert_called_with("event_id", 50)
