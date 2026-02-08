@@ -19,6 +19,7 @@ from src.agents.jira_agent import JiraAgent
 from src.agents.code_review_agent import CodeReviewAgent, format_review_comment
 from src.agents.testing_agent import TestingAgent, TestStatus
 from src.agents.development_agent import DevelopmentAgent
+from src.clients.jira_client import JiraClient
 from src.middleware.webhook_middleware import verify_jira_webhook_signature
 from src.scheduler import get_scheduler
 
@@ -53,6 +54,9 @@ class JiraWebhookRequest(BaseModel):
     webhookEvent: str
     issue: Optional[Dict[str, Any]] = None
     issue_key: Optional[str] = None
+
+
+TARGET_STATUS = "Waiting Development"
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -265,7 +269,7 @@ async def _process_jira_task_in_background(issue_key: str):
 @app.post("/webhooks/jira")
 async def jira_webhook(request: JiraWebhookRequest, background_tasks: BackgroundTasks):
     """
-    Receive Jira webhook events and run MVP Jira flow end-to-end.
+    Receive Jira webhook events and dispatch MVP Jira flow in background.
     """
     logger.info("Jira webhook received: %s", request.webhookEvent)
 
@@ -276,16 +280,22 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     if not issue_key:
         raise HTTPException(status_code=400, detail="issue_key is required")
 
-    if status and status != "Waiting Development":
+    if status != TARGET_STATUS:
+        logger.info("Jira webhook skipped: issue_key=%s status=%s", issue_key, status)
         return {
             "status": "skipped",
             "issue_key": issue_key,
             "status_current": status,
-            "message": "Only 'Development Waiting' status is processed"
+            "message": f"Only '{TARGET_STATUS}' status is processed"
         }
 
-    result = await run_mvp_jira_flow(issue_key, payload=request.dict())
-    return result
+    logger.info("Jira webhook accepted: issue_key=%s status=%s", issue_key, status)
+    background_tasks.add_task(run_mvp_jira_flow, issue_key, request.dict())
+    return {
+        "status": "accepted",
+        "issue_key": issue_key,
+        "message": "Dispatched to background"
+    }
 
 
 async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str, str]]):
