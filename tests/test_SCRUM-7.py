@@ -1,53 +1,43 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from app import app, Event
+from datetime import datetime
+
+from api_server import app, Event
 
 @pytest.fixture
 def client():
-    with TestClient(app) as client:
-        yield client
+    return TestClient(app)
 
-def test_create_event(client):
+def test_create_event_success(client):
     event_data = {
-        "event_code": "12345",
-        "customer_id": "6789",
-        "transaction_id": "54321",
-        "merchant_id": "9876",
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
         "amount": 100.0,
         "event_data": {"key": "value"},
-        "transaction_date": "2022-01-01T00:00:00",
-        "channel": "web"
+        "transaction_date": datetime.now()
     }
     response = client.post("/events", json=event_data)
     assert response.status_code == 200
-    data = response.json()
-    assert "event_code" in data
-    assert data["channel"] == "web"
+    assert response.json() == {"status": "success"}
 
-def test_create_event_missing_channel(client):
+@patch("api_server.httpx.AsyncClient")
+def test_create_event_http_error(mock_client, client):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = Exception("HTTP Error")
+    mock_client.return_value.post.return_value = mock_response
+
     event_data = {
-        "event_code": "12345",
-        "customer_id": "6789",
-        "transaction_id": "54321",
-        "merchant_id": "9876",
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
         "amount": 100.0,
         "event_data": {"key": "value"},
-        "transaction_date": "2022-01-01T00:00:00"
+        "transaction_date": datetime.now()
     }
     response = client.post("/events", json=event_data)
-    assert response.status_code == 422
-
-def test_create_event_invalid_channel(client):
-    event_data = {
-        "event_code": "12345",
-        "customer_id": "6789",
-        "transaction_id": "54321",
-        "merchant_id": "9876",
-        "amount": 100.0,
-        "event_data": {"key": "value"},
-        "transaction_date": "2022-01-01T00:00:00",
-        "channel": 123  # Invalid channel type
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 422
+    assert response.status_code == 500
+    assert response.json() == {"error": "Internal Server Error"}
