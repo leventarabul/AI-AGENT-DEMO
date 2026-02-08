@@ -190,6 +190,15 @@ class AgentScheduler:
                 logger.warning(f"  ⚠️ No code files found to review for {issue_key}")
                 return
 
+            issue_key_lower = (issue_key or "").lower()
+            filtered_files = [
+                (path, content)
+                for path, content in code_files
+                if issue_key_lower and issue_key_lower in path.lower()
+            ]
+            if filtered_files:
+                code_files = filtered_files
+
             result = await agent.review_pull_request(issue_key, code_files)
 
             if result.decision in (ReviewDecision.BLOCK, ReviewDecision.REQUEST_CHANGES):
