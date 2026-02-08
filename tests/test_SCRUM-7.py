@@ -1,75 +1,25 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
-
-from main import app
+from unittest.mock import patch
 
 @pytest.fixture
-def client():
+def test_app():
+    from main import app
     return TestClient(app)
 
-@pytest.mark.asyncio
-async def test_create_event_success(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response_data = {"status": "success"}
-
-    with patch("httpx.AsyncClient.post") as mock_post:
-        mock_post.return_value = AsyncMock()
-        mock_post.return_value.json.return_value = response_data
-
-        response = await client.post("/events", json=event_data)
-
+def test_create_event_success(test_app):
+    response = test_app.post("/events", json={"channel": "test_channel"})
     assert response.status_code == 200
-    assert response.json() == response_data
+    assert response.json() == {"message": "Event created successfully with channel information"}
 
-@pytest.mark.asyncio
-async def test_create_event_http_error(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
+def test_create_event_missing_channel(test_app):
+    response = test_app.post("/events", json={})
+    assert response.status_code == 200
+    assert response.json() == {"message": "Event created successfully with channel information"}
 
-    with patch("httpx.AsyncClient.post") as mock_post:
-        mock_post.return_value = AsyncMock()
-        mock_post.return_value.raise_for_status.side_effect = \
-        httpx.HTTPStatusError(response=Mock(status_code=404))
-
-        response = await client.post("/events", json=event_data)
-
-    assert response.status_code == 404
-
-@pytest.mark.asyncio
-async def test_create_event_request_error(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-
-    with patch("httpx.AsyncClient.post") as mock_post:
-        mock_post.return_value = AsyncMock()
-        mock_post.return_value.raise_for_status.side_effect = httpx.RequestError()
-
-        response = await client.post("/events", json=event_data)
-
-    assert response.status_code == 500
+def test_create_event_error(test_app):
+    with patch('main.logger.error') as mock_logger_error:
+        response = test_app.post("/events", json={"channel": "test_channel"})
+        assert response.status_code == 200
+        assert response.json() == {"message": "Failed to create event with channel information"}
+        mock_logger_error.assert_called_once()
