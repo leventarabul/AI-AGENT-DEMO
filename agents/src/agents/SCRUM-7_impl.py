@@ -1,23 +1,29 @@
-import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import httpx
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Logger configuration
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+class EventRequest(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: str
+    event_data: dict
+    channel: str
 
-# Define API endpoint for receiving event channel information
-@app.post("/event/channel")
-async def receive_event_channel(channel: str):
-    try:
-        # Log the received channel information
-        logger.info(f"Received event channel: {channel}")
-        
-        # Any additional business logic can be added here
-        
-        return {"message": "Event channel information received successfully"}
-    except Exception as e:
-        logger.error(f"Error processing event channel: {e}")
-        return {"message": "Error processing event channel"}
+@app.post("/events")
+async def create_event(event: EventRequest):
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post("http://demo-domain-api:8000/events", json=event.dict())
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail="Request error: {}".format(str(e)))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="An error occurred: {}".format(str(e)))
