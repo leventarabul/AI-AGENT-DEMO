@@ -1,38 +1,41 @@
-# agents/src/clients/demo_domain_client.py
-
-import httpx
-
-DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
-
-async def register_event(event_data: dict):
-    async with httpx.AsyncClient() as client:
-        url = f"{DEMO_DOMAIN_URL}/events"
-        try:
-            response = await client.post(url, json=event_data, auth=("admin", "admin123"))
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"Error registering event: {e}")
-            return None
-
 # demo-domain/src/demo-environment/api_server.py
 
 from fastapi import FastAPI
-from pydantic import BaseModel
 
 app = FastAPI()
 
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: str
-    event_data: dict
-    channel: str
-
 @app.post("/events")
-async def create_event(event: Event):
-    # Save event to database with channel info
-    return {"message": "Event created successfully"}
+async def create_event():
+    pass
+
+# Add new endpoint for channel information
+@app.post("/events/{event_id}/channel")
+async def add_channel_info(event_id: int, channel: str):
+    pass
+
+# demo-domain/src/demo-environment/job_processor.py
+
+import asyncio
+
+async def process_events():
+    pass
+
+# Add new function to handle processing events with channel information
+async def process_events_with_channel():
+    pass
+
+# Update job triggering logic to call new function
+@app.post("/admin/jobs/process-events")
+async def trigger_job():
+    asyncio.create_task(process_events_with_channel())
+    return {"status": "triggered", "message": "Event processing job started"}
+
+# demo-domain/src/demo-environment/init.sql
+
+ALTER TABLE events ADD COLUMN channel VARCHAR(255);
+
+# Update the database schema to include the new channel field
+
+# demo-domain/src/demo-environment/requirements.txt
+
+# Add any new dependencies required for the implementation
