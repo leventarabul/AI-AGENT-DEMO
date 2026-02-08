@@ -230,7 +230,7 @@ class JiraAgent:
             "3. Add type hints\n"
             "4. Output ONLY the code, no explanations\n"
             "5. Start with ```python and end with ```\n"
-            "6. NEVER use logger.info(); always use the logging module\n"
+            "6. NEVER use print(); always use the logging module\n"
         )
         
         response = await self.ai_client.generate(
@@ -569,9 +569,13 @@ class JiraAgent:
             failure_lines.append(f"- {failure.test_name}{loc}: {failure.error_message}")
         details = "\n".join(failure_lines)
         if not details:
+            err = (getattr(result, "error", "") or "").strip()
             raw = (getattr(result, "raw_output", "") or "").strip()
             raw_tail = "\n".join(raw.splitlines()[-40:]) if raw else result.summary
-            details = f"Test output (tail):\n{raw_tail}"
+            if err:
+                details = f"Error: {err}\nTest output (tail):\n{raw_tail}"
+            else:
+                details = f"Test output (tail):\n{raw_tail}"
 
         await self.jira_client.add_comment(
             issue_key,
