@@ -390,7 +390,14 @@ class AgentScheduler:
             
             logger.info(f"  🧪 Testing {issue_key} with TestingAgent...")
             agent = TestingAgent(repo_root=self.git_repo_path)
-            result = agent.execute({"test_files": None, "test_path": "tests/"})
+            result = agent.execute(
+                {
+                    "qa_mode": True,
+                    "issue_key": issue_key,
+                    "test_files": None,
+                    "test_path": "tests/",
+                }
+            )
             status = getattr(result, "status", None)
             summary = getattr(result, "summary", None)
             logger.info(
@@ -399,21 +406,19 @@ class AgentScheduler:
 
             jira_client = await self._get_jira_client()
             if status == TestStatus.PASS:
-                await jira_client.add_comment(issue_key, f"✅ Tests passed: {summary}")
+                await jira_client.add_comment(
+                    issue_key,
+                    self._format_testing_comment("✅", result),
+                )
                 await self._transition_issue_to_status(
                     jira_client,
                     issue_key,
                     ["Done", "Completed", "Resolved"],
                 )
             else:
-                raw = (getattr(result, "raw_output", "") or "").strip()
-                raw_tail = "\n".join(raw.splitlines()[-40:]) if raw else summary
-                err = (getattr(result, "error", "") or "").strip()
-                if err:
-                    raw_tail = f"Error: {err}\n" + raw_tail
                 await jira_client.add_comment(
                     issue_key,
-                    f"❌ Tests failed: {summary}\nTest output (tail):\n{raw_tail}",
+                    self._format_testing_comment("❌", result),
                 )
                 await self._transition_issue_to_status(
                     jira_client,
@@ -423,6 +428,34 @@ class AgentScheduler:
         
         except Exception as e:
             logger.error(f"  ❌ Error testing {issue_key}: {e}")
+
+    def _format_testing_comment(self, prefix: str, result: Any) -> str:
+        summary = getattr(result, "summary", "")
+        cases = getattr(result, "case_results", []) or []
+        lines = [f"{prefix} Tests result: {summary}"]
+
+        if cases:
+            lines.append("Test Cases:")
+            for case in cases:
+                status = getattr(case, "status", "")
+                name = getattr(case, "name", "")
+                detail = getattr(case, "details", "")
+                if detail:
+                    lines.append(f"- {status}: {name} ({detail})")
+                else:
+                    lines.append(f"- {status}: {name}")
+
+        err = (getattr(result, "error", "") or "").strip()
+        if err:
+            lines.append(f"Error: {err}")
+
+        raw = (getattr(result, "raw_output", "") or "").strip()
+        if raw:
+            raw_tail = "\n".join(raw.splitlines()[-40:])
+            lines.append("Test output (tail):")
+            lines.append(raw_tail)
+
+        return "\n".join(lines)
 
     async def _update_retry_label(self, jira_client: Any, issue_key: str, increment: bool) -> int:
         try:

@@ -577,6 +577,8 @@ class JiraAgent:
         test_agent = TestingAgent(repo_root=self.git_repo_path)
         return test_agent.execute(
             {
+                "qa_mode": True,
+                "issue_key": issue_key,
                 "test_files": [f"tests/test_{issue_key}.py"],
                 "test_path": "tests/",
             }
@@ -586,7 +588,7 @@ class JiraAgent:
         if result.status == TestStatus.PASS:
             await self.jira_client.add_comment(
                 issue_key,
-                f"✅ Tests passed: {result.summary}",
+                self._format_testing_comment("✅", result),
             )
             return
 
@@ -606,8 +608,33 @@ class JiraAgent:
 
         await self.jira_client.add_comment(
             issue_key,
-            f"❌ Tests failed: {result.summary}\n{details}",
+            self._format_testing_comment("❌", result, details),
         )
+
+    def _format_testing_comment(
+        self,
+        prefix: str,
+        result: Any,
+        details: Optional[str] = None,
+    ) -> str:
+        cases = getattr(result, "case_results", []) or []
+        lines = [f"{prefix} Tests result: {result.summary}"]
+
+        if cases:
+            lines.append("Test Cases:")
+            for case in cases:
+                status = getattr(case, "status", "")
+                name = getattr(case, "name", "")
+                detail = getattr(case, "details", "")
+                if detail:
+                    lines.append(f"- {status}: {name} ({detail})")
+                else:
+                    lines.append(f"- {status}: {name}")
+
+        if details:
+            lines.append(details)
+
+        return "\n".join(lines)
 
     def _get_retry_count(self, labels: List[str]) -> int:
         for label in labels or []:
