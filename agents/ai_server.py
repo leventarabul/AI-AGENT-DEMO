@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import asyncio
 import os
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
@@ -78,7 +79,7 @@ async def ai_event(request: AIEventRequest):
 
 async def _process_jira_task_in_background(issue_key: str):
     """Background task to process Jira issue with AI agent."""
-    print(f"\n🚀 [BACKGROUND] Starting task processing for {issue_key}")
+    logger.info(f"\n🚀 [BACKGROUND] Starting task processing for {issue_key}")
     try:
         agent = JiraAgent(
             jira_url=os.getenv("JIRA_URL"),
@@ -88,9 +89,9 @@ async def _process_jira_task_in_background(issue_key: str):
             git_repo_path=os.getenv("GIT_REPO_PATH", "/tmp/repo"),
         )
         result = await agent.process_task(issue_key)
-        print(f"✅ [BACKGROUND] Jira task {issue_key} processed successfully:\n{result}")
+        logger.info(f"✅ [BACKGROUND] Jira task {issue_key} processed successfully:\n{result}")
     except Exception as e:
-        print(f"❌ [BACKGROUND] Error processing Jira task {issue_key}: {e}")
+        logger.info(f"❌ [BACKGROUND] Error processing Jira task {issue_key}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -101,7 +102,7 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     Receive Jira webhook events.
     Filters for 'Development Waiting' status and dispatches to JiraAgent.
     """
-    print(f"🔔 Jira webhook received: {request.webhookEvent}")
+    logger.info(f"🔔 Jira webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -110,7 +111,7 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     
     # Only process if in "Waiting Development" status
     if status == "Waiting Development":
-        print(f"  Task ready: {issue_key} ({issue_type})")
+        logger.info(f"  Task ready: {issue_key} ({issue_type})")
         # Dispatch to background task
         background_tasks.add_task(_process_jira_task_in_background, issue_key)
         return {
@@ -131,16 +132,148 @@ async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str,
     """Background task to review code with AI agent."""
     try:
         logger.info(f"📋 Starting code review for {issue_key}")
-        agent = CodeReviewAgent(
-            ai_management_url=os.getenv("AI_MANAGEMENT_URL"),
-            jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
-        )
+        repo_root = os.getenv("GIT_REPO_PATH", "/app")
+        agent = CodeReviewAgent(repo_root=repo_root)
+
+        if not code_files:
+            code_files = _collect_code_files_from_repo(repo_root)
+
         result = await agent.review_pull_request(issue_key, code_files)
         logger.info(f"✅ Code review for {issue_key} completed:\n{result}")
+
+        await _post_review_result_to_jira(issue_key, result)
     except Exception as e:
         logger.error(f"❌ Error reviewing code for {issue_key}: {e}", exc_info=True)
+
+
+def _collect_code_files_from_repo(repo_root: str) -> List[Tuple[str, str]]:
+    """Collect changed files from git for review.
+
+    Returns a list of (file_path, content) tuples.
+    """
+    if not os.path.exists(os.path.join(repo_root, ".git")):
+        logger.warning(f"Repo not found at {repo_root}; skipping git diff")
+        return []
+
+    def _run_git(args: List[str]) -> str:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
+            },
+        )
+        return result.stdout.strip()
+
+    def _ref_exists(ref: str) -> bool:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
+            },
+        )
+        return result.returncode == 0
+
+    base_ref = None
+    for ref in ["origin/main", "origin/master", "main", "master"]:
+        if _ref_exists(ref):
+            base_ref = ref
+            break
+
+    changed_files: List[str] = []
+    if base_ref:
+        diff_output = _run_git(["diff", "--name-only", f"{base_ref}...HEAD"])
+        if diff_output:
+            changed_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
+
+    if not changed_files:
+        show_output = _run_git(["show", "--name-only", "--pretty=", "HEAD"])
+        if show_output:
+            changed_files = [line.strip() for line in show_output.splitlines() if line.strip()]
+
+    code_files: List[Tuple[str, str]] = []
+    for rel_path in changed_files:
+        abs_path = os.path.join(repo_root, rel_path)
+        if not os.path.exists(abs_path) or os.path.isdir(abs_path):
+            continue
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            code_files.append((rel_path, content))
+        except UnicodeDecodeError:
+            continue
+
+    return code_files
+
+
+async def _post_review_result_to_jira(issue_key: str, review_result: Any) -> None:
+    """Post review result to Jira and transition status."""
+    jira_url = os.getenv("JIRA_URL")
+    jira_username = os.getenv("JIRA_USERNAME")
+    jira_token = os.getenv("JIRA_API_TOKEN")
+
+    if not jira_url or not jira_username or not jira_token:
+        logger.warning("Jira credentials missing; skipping status update")
+        return
+
+    from src.clients.jira_client import JiraClient
+    from src.agents.code_review_agent import ReviewDecision, format_review_comment
+
+    jira_client = JiraClient(
+        jira_url=jira_url,
+        username=jira_username,
+        api_token=jira_token,
+    )
+
+    decision = getattr(review_result, "decision", None)
+    reasoning = getattr(review_result, "reasoning", "")
+
+    if decision == ReviewDecision.APPROVE:
+        comment = "✅ " + format_review_comment(review_result)
+        target_names = ["Testing", "Test Ready", "Ready for Testing"]
+    elif decision == ReviewDecision.REQUEST_CHANGES:
+        comment = "⚠️ " + format_review_comment(review_result)
+        target_names = ["Waiting Development", "In Development", "To Do"]
+    else:
+        comment = "🚫 " + format_review_comment(review_result)
+        target_names = ["Waiting Development", "In Development", "To Do", "Blocked"]
+
+    await jira_client.add_comment(issue_key, comment)
+    await _transition_issue_to_status(jira_client, issue_key, target_names)
+
+
+async def _transition_issue_to_status(
+    jira_client: Any,
+    issue_key: str,
+    target_names: List[str],
+) -> None:
+    """Transition Jira issue to first matching status name."""
+    try:
+        transitions = await jira_client.get_transitions(issue_key)
+        target = None
+        for name in target_names:
+            for t in transitions:
+                if t.get("name") == name:
+                    target = t
+                    break
+            if target:
+                break
+        if not target:
+            logger.warning(f"No matching transition found for {target_names}; skipping status change")
+            return
+        await jira_client.transition_issue(issue_key, transition_id=target.get("id"))
+        logger.info(f"Transitioned '{issue_key}' to '{target.get('name')}'")
+    except Exception as e:
+        logger.warning(f"Transition error for {issue_key}: {e}")
 
 
 class CodeReviewWebhookRequest(BaseModel):
@@ -160,7 +293,7 @@ async def code_review_webhook(
     Receive code review webhook events.
     Filters for 'In Review' status, analyzes code, transitions to Testing or back to Development.
     """
-    print(f"🔍 Code review webhook received: {request.webhookEvent}")
+    logger.info(f"🔍 Code review webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -168,7 +301,7 @@ async def code_review_webhook(
     
     # Only process if in review-ready status (PR ready for review)
     if status in ("In Review", "Code Review", "Code Ready"):
-        print(f"  Reviewing: {issue_key}")
+        logger.info(f"  Reviewing: {issue_key}")
         
         # If code_files not provided, extract from PR
         code_files = request.code_files or []
@@ -191,16 +324,36 @@ async def code_review_webhook(
 async def _run_tests_in_background(issue_key: str, test_files: List[str] = None):
     """Background task to run tests with TestingAgent."""
     try:
-        agent = TestingAgent(
-            jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
-            repo_path=os.getenv("GIT_REPO_PATH", "."),
-        )
-        result = await agent.run_tests(issue_key, test_files)
-        print(f"✅ Testing for {issue_key} completed:\n{result}")
+        from src.agents.testing_agent import TestStatus
+        from src.clients.jira_client import JiraClient
+
+        repo_root = os.getenv("GIT_REPO_PATH", ".")
+        agent = TestingAgent(repo_root=repo_root)
+        result = agent.execute({"test_files": test_files, "test_path": "tests/"})
+        logger.info(f"✅ Testing for {issue_key} completed:\n{result}")
+
+        jira_url = os.getenv("JIRA_URL")
+        jira_username = os.getenv("JIRA_USERNAME")
+        jira_token = os.getenv("JIRA_API_TOKEN")
+        if jira_url and jira_username and jira_token:
+            jira_client = JiraClient(jira_url, jira_username, jira_token)
+            summary = getattr(result, "summary", "")
+            if result.status == TestStatus.PASS:
+                await jira_client.add_comment(issue_key, f"✅ Tests passed: {summary}")
+                await _transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Done", "Completed", "Resolved"],
+                )
+            else:
+                await jira_client.add_comment(issue_key, f"❌ Tests failed: {summary}")
+                await _transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Waiting Development", "In Development", "To Do"],
+                )
     except Exception as e:
-        print(f"❌ Error running tests for {issue_key}: {e}")
+        logger.info(f"❌ Error running tests for {issue_key}: {e}")
 
 
 class TestingWebhookRequest(BaseModel):
@@ -219,7 +372,7 @@ async def testing_webhook(
     Receive testing webhook events.
     Filters for 'Testing' status, runs tests, transitions to Done or back to Development.
     """
-    print(f"🧪 Testing webhook received: {request.webhookEvent}")
+    logger.info(f"🧪 Testing webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -227,7 +380,7 @@ async def testing_webhook(
     
     # Only process if in "Testing" status
     if status == "Testing" or status == "Test Ready":
-        print(f"  Running tests: {issue_key}")
+        logger.info(f"  Running tests: {issue_key}")
         
         # Dispatch to background task
         background_tasks.add_task(_run_tests_in_background, issue_key, request.test_files)
@@ -326,7 +479,7 @@ async def api_process_reviews(background_tasks: BackgroundTasks):
         )
         
         # Find all review-ready tasks
-        jql = 'status in ("Code Review", "In Review")'
+        jql = 'status in ("Code Review", "In Review", "Review", "Code Ready")'
         issues = await jira_client.search_issues(jql)
         
         if not issues:
@@ -405,6 +558,13 @@ async def api_process_testing(background_tasks: BackgroundTasks):
 @app.post("/api/agents/process-all")
 async def api_process_all(background_tasks: BackgroundTasks):
     """
+    MVP Jira Flow:
+    Jira task alır →
+    development_agent →
+    code_review_agent →
+    testing_agent →
+    test başarılıysa completed = true
+
     Manually trigger all agents in sequence (Development → Review → Testing).
     
     Usage:
@@ -413,6 +573,7 @@ async def api_process_all(background_tasks: BackgroundTasks):
     Returns:
         - status: "started"
         - tasks: breakdown by stage
+        - completed: True if testing succeeded (async result), otherwise False
     """
     try:
         from src.clients.jira_client import JiraClient
@@ -429,7 +590,7 @@ async def api_process_all(background_tasks: BackgroundTasks):
             "testing": []
         }
         
-        # Process Waiting Development
+        # 1) development_agent: create/update code for Waiting Development tasks
         dev_jql = 'status = "Waiting Development" AND assignee is EMPTY'
         dev_issues = await jira_client.search_issues(dev_jql)
         for issue in dev_issues:
@@ -437,15 +598,15 @@ async def api_process_all(background_tasks: BackgroundTasks):
             results["development_waiting"].append(issue_key)
             background_tasks.add_task(_process_jira_task_in_background, issue_key)
         
-        # Process review-ready
-        review_jql = 'status in ("Code Review", "In Review")'
+        # 2) code_review_agent: review code for In Review tasks
+        review_jql = 'status in ("Code Review", "In Review", "Review", "Code Ready")'
         review_issues = await jira_client.search_issues(review_jql)
         for issue in review_issues:
             issue_key = issue.get('key')
             results["in_review"].append(issue_key)
             background_tasks.add_task(_review_code_in_background, issue_key, [])
         
-        # Process Testing
+        # 3) testing_agent: run tests for Testing tasks
         test_jql = 'status = "Testing"'
         test_issues = await jira_client.search_issues(test_jql)
         for issue in test_issues:
@@ -454,11 +615,19 @@ async def api_process_all(background_tasks: BackgroundTasks):
             background_tasks.add_task(_run_tests_in_background, issue_key, None)
         
         total = len(dev_issues) + len(review_issues) + len(test_issues)
+
+        # Response semantics:
+        # - development_waiting: Jira issues dispatched to development_agent
+        # - in_review: Jira issues dispatched to code_review_agent
+        # - testing: Jira issues dispatched to testing_agent
+        # - completed: True only when tests succeed (async); not known at dispatch time
+        completed = False
         
         return {
             "status": "started",
             "total_tasks": total,
             "tasks": results,
+            "completed": completed,
             "message": f"Started processing {total} task(s) across all stages"
         }
     

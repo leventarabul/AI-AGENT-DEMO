@@ -1,12 +1,16 @@
 # Campaign Management System - Distributed Microservices
 
-Complete campaign and event processing system with autonomous agents, built as independent microservices.
+Complete campaign and event processing system with autonomous agents, built as independent \
+microservices.
 
 ## 📋 Quick Start
 
 ```bash
 # Start all services
 docker compose up -d
+
+# Start log streaming (after services are up)
+docker compose logs -f
 
 # Check services
 docker compose ps
@@ -240,14 +244,16 @@ docker compose up -d
 ## 📖 Full Documentation
 
 For detailed information, see:
-- **Knowledge Management:** [knowledge_management.md](knowledge_management.md) - How to maintain and access shared knowledge
+- **Knowledge Management:** [knowledge_management.md](knowledge_management.md) - How to maintain \
+and access shared knowledge
 - **System Architecture:** [docs/IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md)
 - **Services Overview:** [docs/PROJECT_ECOSYSTEM.md](docs/PROJECT_ECOSYSTEM.md)
 - **Setup Guide:** [docs/SETUP.md](docs/SETUP.md)
 - **Security:** [docs/SECURITY.md](docs/SECURITY.md)
 - **Curl Commands:** [docs/CURL_COMMANDS.md](docs/CURL_COMMANDS.md)
 - **Demo Domain API:** [demo-domain/docs/API_EXAMPLES.md](demo-domain/docs/API_EXAMPLES.md)
-- **AI Management:** [ai-management/docs/AI_MANAGEMENT_MODULE.md](ai-management/docs/AI_MANAGEMENT_MODULE.md)
+- **AI Management:** \
+[ai-management/docs/AI_MANAGEMENT_MODULE.md](ai-management/docs/AI_MANAGEMENT_MODULE.md)
 - **Agents:** [agents/docs/AGENTS_MODULE.md](agents/docs/AGENTS_MODULE.md)
 
 ## ✅ Status
@@ -262,4 +268,5 @@ For detailed information, see:
 
 ## 📞 Support
 
-Each service has its own README and documentation directory. Check the relevant folder for service-specific information.
+Each service has its own README and documentation directory. Check the relevant folder for \
+service-specific information.

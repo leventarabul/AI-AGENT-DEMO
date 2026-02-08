@@ -1,47 +1,33 @@
 import pytest
-from unittest.mock import patch, Mock
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-from httpx import HTTPStatusError
-
-from main import app, Event, EventIn, HTTPException
-
-client = TestClient(app)
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def mock_db_session():
-    session = Mock(spec=Session)
-    return session
+def mock_httpx_client():
+    return AsyncMock()
 
-@pytest.fixture
-def event_in():
-    return EventIn(channel="test")
-
-@pytest.fixture
-def event():
-    return Event(channel="test")
-
-def test_create_event_success(mock_db_session, event_in, event):
-    with patch('main.session', new=mock_db_session):
-        response = client.post("/events/", json=event_in.dict())
-        assert response.status_code == 200
-        assert "id" in response.json()
-        mock_db_session.add.assert_called_once_with(event)
-        mock_db_session.commit.assert_called_once()
-
-def test_create_event_db_error(mock_db_session, event_in):
-    mock_db_session.add.side_effect = Exception("DB error")
-    with patch('main.session', new=mock_db_session):
-        with pytest.raises(HTTPStatusError) as e:
-            client.post("/events/", json=event_in.dict())
-        assert e.value.status_code == 500
-        assert str(e.value) == "Failed to create event"
-        mock_db_session.add.assert_called_once()
-        mock_db_session.rollback.assert_called_once()
-        mock_db_session.commit.assert_not_called()
-
-def test_create_event_validation_error(event_in):
-    event_in.channel = None
-    with pytest.raises(HTTPStatusError) as e:
-        client.post("/events/", json=event_in.dict())
-    assert e.value.status_code == 422  # validation error status code
+@pytest.mark.asyncio
+async def test_update_event_channel(mock_httpx_client):
+    event_id = 1
+    channel = "test_channel"
+    
+    mock_httpx_client.patch.return_value.raise_for_status = AsyncMock()
+    
+    async with httpx.AsyncClient() as client:
+        url = f"http://demo-domain-api:8000/events/{event_id}"
+        payload = {"channel": channel}
+        headers = {"Content-Type": "application/json"}
+        
+        await update_event_channel(event_id, channel)
+        
+        mock_httpx_client.patch.assert_awaited_once_with(url, json=payload, headers=headers)
+        mock_httpx_client.patch.return_value.raise_for_status.assert_awaited_once()
+        
+@pytest.mark.asyncio
+async def test_update_event_channel_error(mock_httpx_client):
+    event_id = 1
+    channel = "test_channel"
+    
+    mock_httpx_client.patch.side_effect = httpx.RequestError("Mocked error")
+    
+    with pytest.raises(httpx.RequestError):
+        await update_event_channel(event_id, channel)
