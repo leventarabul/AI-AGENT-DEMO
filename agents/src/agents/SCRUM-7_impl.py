@@ -1,12 +1,17 @@
-# agents/src/clients/demo_domain_client.py
+# Update the data model for events to include the new channel field
+class Event(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    event_data: Dict[str, Any]
+    transaction_date: datetime
+    channel: str  # New field for channel information
 
-import httpx
-
-DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
-
-async def register_event(event_data: dict) -> dict:
-    url = f"{DEMO_DOMAIN_URL}/events"
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(url, json=event_data, auth=("admin", "admin123"))
-        response.raise_for_status()
-        return response.json()
+# Update the event registration endpoint to accept the channel field
+@app.post("/events")
+async def create_event(event: Event, channel: str):
+    event.channel = channel
+    # Save the event to the database with the channel information
+    # Return the event details with the new channel field
