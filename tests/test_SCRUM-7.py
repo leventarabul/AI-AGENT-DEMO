@@ -1,22 +1,47 @@
-from agents.SCRUM-7_impl import create_event_endpoint, EventIn
-from fastapi import HTTPException
+import pytest
+from fastapi.testclient import TestClient
 from unittest.mock import patch
+from app import app
+from app import create_event
 
-def test_create_event_endpoint_success():
-    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"}, channel="web")
-    result = create_event_endpoint(event)
-    assert result.event_code == event.event_code
+@pytest.fixture
+def client():
+    with TestClient(app) as client:
+        yield client
 
-def test_create_event_endpoint_no_channel():
-    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"})
-    result = create_event_endpoint(event)
-    assert result.event_code == event.event_code
+def test_create_event_success(client):
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01",
+        "event_data": {"key": "value"},
+        "channel": "web"
+    }
 
-@patch("agents.SCRUM-7_impl.create_event")
-def test_create_event_endpoint_failure(mock_create_event):
-    mock_create_event.return_value = False
-    event = EventIn(event_code="test_event", customer_id="123", transaction_id="456", merchant_id="789", amount=100.0, event_data={"key": "value"}, channel="web")
-    try:
-        create_event_endpoint(event)
-    except HTTPException as e:
-        assert e.status_code == 400
+    response = client.post("/events/", json=event_data)
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Event created successfully"}
+
+@patch('app.httpx.AsyncClient')
+def test_create_event_http_error(mock_http_client, client):
+    mock_http_client.return_value.post.side_effect = Exception("Mocked HTTPError")
+
+    event_data = {
+        "event_code": "test_event",
+        "customer_id": "12345",
+        "transaction_id": "67890",
+        "merchant_id": "54321",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01",
+        "event_data": {"key": "value"},
+        "channel": "web"
+    }
+
+    response = client.post("/events/", json=event_data)
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal Server Error"}
