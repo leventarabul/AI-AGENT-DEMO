@@ -103,6 +103,7 @@ class JiraClient:
     \
     \
     \
+    \
     -> None:
         """Transition issue to a new status."""
         url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/transitions"
