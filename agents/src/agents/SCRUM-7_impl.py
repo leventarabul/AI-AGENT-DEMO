@@ -1,14 +1,12 @@
-from fastapi import FastAPI, HTTPException
-from typing import Optional
+# agents/src/clients/demo_domain_client.py
 
-app = FastAPI()
+import httpx
 
-@app.post("/events")
-async def create_event(channel: Optional[str] = None):
-    try:
-        # Save event with channel info
-        return {"message": "Event created successfully with channel info"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Error creating event")
+DEMO_DOMAIN_URL = "http://demo-domain-api:8000"
 
-# You can add database queries and updates to save the channel information
+async def register_event(event_data: dict) -> dict:
+    url = f"{DEMO_DOMAIN_URL}/events"
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=event_data, auth=("admin", "admin123"))
+        response.raise_for_status()
+        return response.json()
