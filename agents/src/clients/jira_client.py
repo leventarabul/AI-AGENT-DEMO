@@ -58,7 +58,8 @@ class JiraClient:
             data = resp.json()
             return data.get("issues", [])
     
-    async def get_issue_by_status(self, status: str, project_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_issue_by_status(self, status: str, project_key: Optional[str] = None) -> \
+    List[Dict[str, Any]]:
         """Fetch issues by status."""
         if project_key:
             jql = f'project = {project_key} AND status = "{status}"'
@@ -98,7 +99,12 @@ class JiraClient:
             resp.raise_for_status()
             return resp.json()
     
-    async def transition_issue(self, issue_key: str, transition_id: str, comment: Optional[str] = None) -> None:
+    async def transition_issue(
+        self,
+        issue_key: str,
+        transition_id: str,
+        comment: Optional[str] = None,
+    ) -> None:
         """Transition issue to a new status."""
         url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/transitions"
         payload = {
@@ -151,3 +157,42 @@ class JiraClient:
             resp.raise_for_status()
             result = resp.json()
             return result.get("transitions", [])
+
+    async def get_comments(self, issue_key: str, max_results: int = 50) -> List[Dict[str, Any]]:
+        """Fetch comments for an issue."""
+        url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/comment"
+        params = {"maxResults": max_results}
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(
+                url,
+                params=params,
+                headers=self._auth_header,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            return result.get("comments", [])
+
+    async def delete_comment(self, issue_key: str, comment_id: str) -> None:
+        """Delete a comment from an issue."""
+        url = f"{self.jira_url}/rest/api/3/issue/{issue_key}/comment/{comment_id}"
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.delete(
+                url,
+                headers=self._auth_header,
+            )
+            resp.raise_for_status()
+
+    async def update_issue_fields(self, issue_key: str, fields: Dict[str, Any]) -> None:
+        """Update issue fields (e.g., labels) for an issue."""
+        url = f"{self.jira_url}/rest/api/3/issue/{issue_key}"
+        payload = {"fields": fields}
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.put(
+                url,
+                json=payload,
+                headers={**self._auth_header, "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
