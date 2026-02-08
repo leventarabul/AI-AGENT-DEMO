@@ -12,7 +12,8 @@ Output: Structured result with files to create/update and commit message
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Iterable, Tuple, Optional
+import re
 
 
 @dataclass
@@ -95,6 +96,13 @@ class DevelopmentAgent:
             jira_key = context.get("jira_issue_key")
             code_changes = context.get("code_changes", {})
             branch_name = context.get("branch_name") or f"develop/{jira_key.lower()}"
+
+            # Optional: auto-fix based on code review issues
+            if context.get("auto_fix") and context.get("review_issues"):
+                code_changes = self._apply_review_fixes(
+                    code_changes=code_changes,
+                    review_issues=context.get("review_issues"),
+                )
             
             # Convert code_changes dict to FileChange objects
             files = []
@@ -102,7 +110,10 @@ class DevelopmentAgent:
                 files.append(FileChange(path=file_path, content=content))
             
             # Create commit message
-            commit_message = f"feat({jira_key}): {context.get('jira_issue_status', 'Development')}"
+            if context.get("auto_fix"):
+                commit_message = f"fix({jira_key}): address code review feedback"
+            else:
+                commit_message = f"feat({jira_key}): {context.get('jira_issue_status', 'Development')}"
             
             # Return structured output for GitService to process
             return DevelopmentResult(
@@ -134,3 +145,215 @@ class DevelopmentAgent:
         
         if not isinstance(context["code_changes"], dict):
             raise ValueError("code_changes must be a dictionary (file_path -> content)")
+
+    def _apply_review_fixes(
+        self,
+        code_changes: Dict[str, str],
+        review_issues: Iterable[Any],
+    ) -> Dict[str, str]:
+        """Apply mechanical fixes based on code review issues.
+
+        This focuses on deterministic, rule-based fixes:
+        - Replace print() with logging
+        - Wrap long lines
+        """
+        issues_by_file = self._group_issues_by_file(review_issues)
+        fixed_changes: Dict[str, str] = {}
+
+        for file_path, content in code_changes.items():
+            file_issues = issues_by_file.get(file_path, [])
+            updated = content
+
+            if self._has_print_violation(file_issues):
+                updated = self._replace_prints_with_logging(updated)
+
+            updated = self._wrap_long_lines(updated, file_issues)
+            fixed_changes[file_path] = updated
+
+        return fixed_changes
+
+    def _group_issues_by_file(self, review_issues: Iterable[Any]) -> Dict[str, List[Dict[str, Any]]]:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for issue in review_issues or []:
+            issue_dict = self._normalize_issue(issue)
+            file_path = issue_dict.get("file_path")
+            if not file_path:
+                continue
+            grouped.setdefault(file_path, []).append(issue_dict)
+        return grouped
+
+    def _normalize_issue(self, issue: Any) -> Dict[str, Any]:
+        if isinstance(issue, dict):
+            return issue
+        issue_dict: Dict[str, Any] = {}
+        for attr in ["severity", "category", "message", "line_number", "file_path"]:
+            issue_dict[attr] = getattr(issue, attr, None)
+        return issue_dict
+
+    def _has_print_violation(self, issues: List[Dict[str, Any]]) -> bool:
+        for issue in issues:
+            message = (issue.get("message") or "").lower()
+            if "print()" in message or "print" in message and "logging" in message:
+                return True
+        return False
+
+    def _replace_prints_with_logging(self, content: str) -> str:
+        lines = content.split("\n")
+        updated_lines = []
+        replaced = False
+
+        for line in lines:
+            if re.search(r"\bprint\(", line):
+                updated_lines.append(re.sub(r"\bprint\(", "logger.info(", line))
+                replaced = True
+            else:
+                updated_lines.append(line)
+
+        if replaced:
+            updated_lines = self._ensure_logger(updated_lines)
+
+        return "\n".join(updated_lines)
+
+    def _ensure_logger(self, lines: List[str]) -> List[str]:
+        has_logging_import = any(re.match(r"\s*import\s+logging\b", line) for line in lines)
+        has_logger = any(re.match(r"\s*logger\s*=\s*logging\.getLogger\(__name__\)", line) for line in lines)
+
+        if has_logging_import and has_logger:
+            return lines
+
+        insert_at = 0
+        for idx, line in enumerate(lines):
+            if line.startswith("import ") or line.startswith("from ") or line.strip().startswith("import "):
+                insert_at = idx + 1
+                continue
+            if line.strip() == "":
+                continue
+            break
+
+        updated = list(lines)
+        if not has_logging_import:
+            updated.insert(insert_at, "import logging")
+            insert_at += 1
+        if not has_logger:
+            updated.insert(insert_at, "logger = logging.getLogger(__name__)")
+        return updated
+
+    def _wrap_long_lines(self, content: str, issues: List[Dict[str, Any]]) -> str:
+        max_len = 100
+        lines = content.split("\n")
+        issue_lines = {i.get("line_number") for i in issues if i.get("category") == "standards"}
+        wrapped_lines: List[str] = []
+
+        for idx, line in enumerate(lines, 1):
+            if len(line) <= max_len:
+                wrapped_lines.append(line)
+                continue
+
+            if issue_lines and idx not in issue_lines:
+                wrapped_lines.append(line)
+                continue
+
+            wrapped_lines.extend(self._wrap_line(line, max_len))
+
+        return "\n".join(wrapped_lines)
+
+    def _wrap_line(self, line: str, max_len: int) -> List[str]:
+        indent = re.match(r"\s*", line).group(0)
+        stripped = line.strip()
+
+        if "logger." in stripped and ("f\"" in stripped or "f'" in stripped):
+            wrapped = self._wrap_logger_fstring(line)
+            if wrapped:
+                return wrapped
+
+        if "os.path.dirname(" in stripped and "=" in stripped:
+            wrapped = self._wrap_os_path_chain(line, indent)
+            if wrapped:
+                return wrapped
+
+        if stripped.startswith("assert "):
+            return self._wrap_assert(line, indent)
+
+        # Generic wrap: break at last space before max_len using backslash continuation
+        current = stripped
+        parts: List[str] = []
+        while len(current) > max_len:
+            split_at = current.rfind(" ", 0, max_len)
+            if split_at <= 0:
+                break
+            parts.append(indent + current[:split_at] + " \\")
+            current = current[split_at + 1 :]
+        parts.append(indent + current)
+        return parts
+
+    def _wrap_assert(self, line: str, indent: str) -> List[str]:
+        stripped = line.strip()
+        body = stripped[len("assert "):]
+        return [
+            f"{indent}assert (",
+            f"{indent}    {body}",
+            f"{indent})",
+        ]
+
+    def _wrap_logger_fstring(self, line: str) -> List[str]:
+        indent = re.match(r"\s*", line).group(0)
+        call_start = line.find("(")
+        call_end = line.rfind(")")
+        if call_start == -1 or call_end == -1 or call_end <= call_start:
+            return []
+
+        prefix = line[: call_start + 1].rstrip()
+        arg = line[call_start + 1 : call_end].strip()
+
+        f_index = arg.find("f\"")
+        quote = "\""
+        if f_index == -1:
+            f_index = arg.find("f'")
+            quote = "'"
+        if f_index == -1:
+            return []
+
+        start = f_index + 2
+        end = self._find_string_end(arg, start, quote)
+        if end is None:
+            return []
+
+        content = arg[start:end]
+        parts = content.split("\\n")
+        if len(parts) == 1:
+            return []
+
+        lines = [f"{prefix}",]
+        for i, part in enumerate(parts):
+            suffix = "\\n" if i < len(parts) - 1 else ""
+            lines.append(f"{indent}    f{quote}{part}{suffix}{quote}")
+        lines.append(f"{indent})")
+        return lines
+
+    def _find_string_end(self, text: str, start: int, quote: str) -> Optional[int]:
+        escaped = False
+        for i in range(start, len(text)):
+            char = text[i]
+            if char == "\\" and not escaped:
+                escaped = True
+                continue
+            if char == quote and not escaped:
+                return i
+            escaped = False
+        return None
+
+    def _wrap_os_path_chain(self, line: str, indent: str) -> List[str]:
+        if "=" not in line:
+            return []
+        prefix, expr = line.split("=", 1)
+        expr = expr.strip()
+        if "os.path.dirname(" not in expr:
+            return []
+
+        prefix = prefix.rstrip()
+        rest = expr.replace("os.path.dirname(", f"\n{indent}    os.path.dirname(")
+        parts = rest.split("\n")
+        lines = [f"{prefix} = {parts[0].strip()}"]
+        for part in parts[1:]:
+            lines.append(part)
+        return lines

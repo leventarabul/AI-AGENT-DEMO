@@ -467,7 +467,47 @@ class Orchestrator:
                         # Git succeeded - extract commit hash
                         final_commit = git_result
                         print(f"  ✓ Git operations completed. Commit: {final_commit}")
+                        # Update context with the actual code changes written by DevelopmentAgent
+                        intent.context["code_changes"] = {
+                            file_change.path: file_change.content
+                            for file_change in output.files
+                        }
                     
+                    # Auto-fix loop for code review failures (single attempt)
+                    if task.agent == "code_review_agent" and hasattr(output, "decision"):
+                        from agents.code_review_agent import ReviewDecision
+                        if output.decision in (ReviewDecision.BLOCK, ReviewDecision.REQUEST_CHANGES):
+                            if not intent.context.get("auto_fix_attempted"):
+                                intent.context["auto_fix_attempted"] = True
+                                print("  🛠️  Code review failed. Attempting auto-fix via DevelopmentAgent...")
+                                dev_agent = self._get_agent("development_agent")
+                                fix_context = {
+                                    **intent.context,
+                                    "auto_fix": True,
+                                    "review_issues": output.issues,
+                                }
+                                fix_output = dev_agent.execute(fix_context)
+                                if fix_output.success:
+                                    print("  🧩 Auto-fix completed. Applying git operations...")
+                                    git_result = self._execute_git_operations(
+                                        fix_output,
+                                        intent.context,
+                                        trace,
+                                        step,
+                                    )
+                                    if git_result:
+                                        final_commit = git_result
+                                        intent.context["code_changes"] = {
+                                            file_change.path: file_change.content
+                                            for file_change in fix_output.files
+                                        }
+                                        output = agent.execute(intent.context)
+                                        print("  🔁 Re-running code review after auto-fix...")
+                                    else:
+                                        print("  ⚠️ Auto-fix git operations failed.")
+                                else:
+                                    print(f"  ⚠️ Auto-fix failed: {fix_output.error}")
+
                     # Centralized failure detection for ALL agents
                     should_continue, error_message = self._check_agent_result(task.agent, output)
                     
