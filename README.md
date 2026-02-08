@@ -11,9 +11,64 @@ docker compose up -d
 # Check services
 docker compose ps
 
+# Tail logs (keep running)
+docker compose logs -f
+
 # Test with example curl
 curl -u admin:{PASSWORD} http://localhost:8000/health
 ```
+
+---
+
+## ✅ MVP: Jira Task Auto-Flow (Dev → Review → Test → Done)
+
+**What it does:**
+- Accepts a Jira issue key via Agents webhook and runs the MVP pipeline
+- Executes Development → Code Review → Testing in order
+- Attempts to transition the Jira task to Done/Closed when tests pass
+
+**Required services (ports):**
+- demo-domain (8000)
+- ai-management (8001)
+- agents (8002)
+
+**Environment variables:**
+- OPENAI_API_KEY
+- JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN, JIRA_WEBHOOK_SECRET
+- GIT_REPO_PATH
+- DRY_RUN (true/false)
+
+**Quick start (copy/paste):**
+```bash
+# Start all services
+docker compose up -d
+
+# Optional: dry run (no Jira comments/transitions)
+export DRY_RUN=true
+
+# Trigger MVP flow
+curl -X POST http://localhost:8002/webhooks/jira \
+  -H "Content-Type: application/json" \
+  -d '{"webhookEvent":"jira:issue_updated","issue_key":"ABC-123"}'
+```
+
+**Example responses:**
+- Accepted:
+```json
+{"status":"accepted","issue_key":"ABC-123","message":"Dispatched to background"}
+```
+- Skipped:
+```json
+{"status":"skipped","issue_key":"ABC-123","status_current":"In Progress","message":"Only 'Waiting Development' status is processed"}
+```
+
+**Smoke test (DRY_RUN):**
+1) `export DRY_RUN=true` and call the webhook.
+2) Check logs for `completed` and transition intent messages.
+
+**Where to look for results:**
+- Agents logs: `docker compose logs -f agents`
+- Jira issue comments (when DRY_RUN is false)
 
 ## 🏗️ Architecture
 
