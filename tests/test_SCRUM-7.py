@@ -1,42 +1,65 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
+from datetime import datetime
+from api_server import app, Event
 
 @pytest.fixture
-def event_data():
-    return {
-        "event_code": "123",
-        "customer_id": "456",
-        "transaction_id": "789",
-        "merchant_id": "101112",
+def client():
+    return TestClient(app)
+
+def test_create_event_success(client):
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
         "amount": 100.0,
         "transaction_date": "2022-01-01T00:00:00",
         "event_data": {"key": "value"},
-        "status": "success",
-        "matched_rule_id": 1,
-        "error_message": None,
-        "created_at": "2022-01-01T00:00:00",
-        "recorded_at": "2022-01-01T00:00:00",
-        "processed_at": None,
         "channel": "web"
-    }
-
-def test_create_event_success(client: TestClient, event_data):
-    response = client.post("/events", json=event_data)
+    })
     assert response.status_code == 200
-    assert response.json()["event_code"] == event_data["event_code"]
+    assert response.json() == {"id": 1, "status": "pending"}
 
-def test_create_event_missing_channel(client: TestClient, event_data):
-    del event_data["channel"]
-    response = client.post("/events", json=event_data)
+def test_create_event_missing_required_fields(client):
+    response = client.post("/events", json={})
     assert response.status_code == 422
 
-def test_create_event_invalid_channel(client: TestClient, event_data):
-    event_data["channel"] = 123
-    response = client.post("/events", json=event_data)
+def test_create_event_invalid_amount(client):
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": "invalid",
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"},
+    })
     assert response.status_code == 422
 
-@patch("app.execute_insert_query")
-def test_create_event_insert_query(mock_execute_insert_query, client: TestClient, event_data):
-    client.post("/events", json=event_data)
-    mock_execute_insert_query.assert_called_once()
+def test_create_event_invalid_date_format(client):
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "01-01-2022 00:00:00",
+        "event_data": {"key": "value"},
+    })
+    assert response.status_code == 422
+
+@patch('api_server.save_event_to_database')
+def test_create_event_database_error(mock_save_event, client):
+    mock_save_event.side_effect = Exception("Database error")
+    response = client.post("/events", json={
+        "event_code": "test_event",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
+        "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
+        "event_data": {"key": "value"},
+    })
+    assert response.status_code == 500

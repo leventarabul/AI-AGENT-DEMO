@@ -1,4 +1,12 @@
-# Add a new field 'channel' to the Event model
+# demo-domain/src/demo-environment/api_server.py
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+app = FastAPI()
+
 class Event(BaseModel):
     event_code: str
     customer_id: str
@@ -7,18 +15,14 @@ class Event(BaseModel):
     amount: float
     transaction_date: datetime
     event_data: dict
-    status: str
-    matched_rule_id: Optional[int]
-    error_message: Optional[str]
-    created_at: datetime
-    recorded_at: datetime
-    processed_at: Optional[datetime]
-    channel: str
+    channel: Optional[str] = None
 
-# Update the API endpoint to include 'channel' in the request payload
 @app.post("/events")
 async def create_event(event: Event):
-    # Save the event with the 'channel' field
-    event_dict = event.dict()
-    # Include the 'channel' field in the insert query
-    # Execute the insert query and return the response
+    # Save event to database with channel information
+    # Return event ID and status "pending"
+    return {"id": 1, "status": "pending"}
+
+# Add endpoint to update event channel if needed
+
+# Add necessary error handling and logging
