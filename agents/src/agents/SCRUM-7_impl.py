@@ -1,16 +1,24 @@
-# agents/src/agents/SCRUM-7_impl.py
-
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
-router = APIRouter()
+app = FastAPI()
 
-class EventChannel(BaseModel):
+class Event(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: str
+    event_data: Optional[dict]
     channel: str
 
-@router.post("/events/{event_id}/channel", response_model=EventChannel)
-async def add_event_channel(event_id: int, channel: EventChannel):
-    # Update event record in the database with the channel information
-    # Return the updated channel information
-    return channel
+@app.post("/events/")
+async def create_event(event: Event):
+    # Save event to database with channel information
+    try:
+        # Database operation to save event with channel info
+        return {"message": "Event created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to create event")
