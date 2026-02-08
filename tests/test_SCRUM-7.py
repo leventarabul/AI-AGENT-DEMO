@@ -1,40 +1,32 @@
 import pytest
-from httpx import Response
-from unittest.mock import AsyncMock
+from httpx import AsyncClient
+from unittest.mock import MagicMock
+from agents.clients.demo_domain_client import register_event_with_channel
 
 @pytest.fixture
-def mock_httpx_response():
-    return AsyncMock(Response)
+def mock_httpx_client():
+    return MagicMock(AsyncClient)
 
 @pytest.mark.asyncio
-async def test_register_event_successful(mock_httpx_response):
-    mock_httpx_response.return_value.json.return_value = {"event_id": 1}
+async def test_register_event_with_channel(mock_httpx_client):
+    event_data = {"name": "Test Event"}
+    channel = "test_channel"
     
-    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
-        result = await register_event({"name": "event1"})
-        
-    assert result == {"event_id": 1}
+    mock_httpx_client.post.return_value.json.return_value = {"id": 1}
+    
+    response = await register_event_with_channel(event_data, channel)
+    
+    assert response == {"id": 1}
+    mock_httpx_client.post.assert_called_once_with("http://demo-domain-api:8000/events", json=event_data)
+    mock_httpx_client.patch.assert_called_once_with("http://demo-domain-api:8000/events/1", json={"channel": channel})
 
 @pytest.mark.asyncio
-async def test_register_event_unauthorized(mock_httpx_response):
-    mock_httpx_response.return_value.status_code = 401
+async def test_register_event_with_channel_error(mock_httpx_client):
+    event_data = {"name": "Test Event"}
+    channel = "test_channel"
     
-    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
-        with pytest.raises(httpx.HTTPStatusError):
-            await register_event({"name": "event1"})
-
-@pytest.mark.asyncio
-async def test_register_event_server_error(mock_httpx_response):
-    mock_httpx_response.return_value.status_code = 500
+    mock_httpx_client.post.side_effect = Exception("Error")
     
-    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
-        with pytest.raises(httpx.HTTPStatusError):
-            await register_event({"name": "event1"})
-
-@pytest.mark.asyncio
-async def test_register_event_timeout(mock_httpx_response):
-    mock_httpx_response.side_effect = httpx.ReadTimeout
-    
-    with patch("httpx.AsyncClient.post", return_value=mock_httpx_response) as mock_post:
-        with pytest.raises(httpx.ReadTimeout):
-            await register_event({"name": "event1"})
+    with pytest.raises(Exception):
+        await register_event_with_channel(event_data, channel)
+        mock_httpx_client.patch.assert_not_called()
