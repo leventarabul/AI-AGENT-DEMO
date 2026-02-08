@@ -1,34 +1,44 @@
-# demo-domain/src/demo-environment/api_server.py
+# agents/src/clients/demo_domain_client.py
 
-from fastapi import FastAPI
-from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from pydantic import BaseModel
+import httpx
 
-app = FastAPI()
-
-class Event(BaseModel):
+class EventRequest(BaseModel):
     event_code: str
     customer_id: str
     transaction_id: str
     merchant_id: str
     amount: float
-    transaction_date: datetime
-    event_data: Optional[dict] = {}
+    transaction_date: str
+    event_data: Optional[dict] = None
+    channel: Optional[str] = None
+
+async def register_event(event: EventRequest, base_url: str, auth: tuple):
+    async with httpx.AsyncClient(timeout=30) as client:
+        url = f"{base_url}/events"
+        resp = await client.post(url, json=event.dict(), auth=auth)
+        resp.raise_for_status()
+
+# demo-domain/src/demo-environment/api_server.py
+
+from fastapi import FastAPI
+from agents.src.clients.demo_domain_client import register_event, EventRequest
+
+app = FastAPI()
 
 @app.post("/events")
-async def create_event(event: Event):
-    # Save event to database with channel info
-    # For logging purposes only
-    event.channel = "web"  # Assume channel info is passed in
-    return {"message": "Event created successfully"}
+async def create_event(event: EventRequest):
+    # Process event
+    await register_event(event, DEMO_DOMAIN_URL, (API_USERNAME, API_PASSWORD))
+    return {"message": "Event registered successfully"}
 
-# Update database schema
-# Add a new column 'channel' to the events table
-# This is a VARCHAR field for logging purpose, not used in business logic
+# demo-domain/src/demo-environment/init.sql
 
-# Modify the database insert query to include the 'channel' field when creating an event
-# Update the schema definition in init.sql
+ALTER TABLE events
+ADD COLUMN channel VARCHAR;
 
-# Add proper validation for the new 'channel' field in the Event model
-# Ensure it's included in the request body and has a valid value
+# demo-domain/src/demo-environment/requirements.txt
+
+httpx
+pydantic

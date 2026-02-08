@@ -1,49 +1,44 @@
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch
-from api_server import app, Event
+from httpx import AsyncClient
+from unittest.mock import AsyncMock
+from agents.src.clients.demo_domain_client import register_event, EventRequest
+from demo_environment.api_server import app
 
 @pytest.fixture
-def client():
-    with TestClient(app) as client:
-        yield client
-
-def test_create_event(client):
-    event_data = {
+def event_data():
+    return {
         "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "54321",
-        "merchant_id": "67890",
+        "customer_id": "123",
+        "transaction_id": "456",
+        "merchant_id": "789",
         "amount": 100.0,
-        "transaction_date": "2022-01-01T12:00:00",
-        "event_data": {}
+        "transaction_date": "2022-01-01",
+        "channel": "web"
     }
-    response = client.post("/events", json=event_data)
+
+@pytest.mark.asyncio
+async def test_register_event(event_data):
+    async with AsyncClient() as client:
+        client.post = AsyncMock()
+        await register_event(EventRequest(**event_data), "http://test-url", ("username", "password"))
+        client.post.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_create_event(event_data):
+    client = app.test_client
+    response = await client.post("/events", json=event_data)
     assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully"}
+    assert response.json() == {"message": "Event registered successfully"}
 
-def test_create_event_missing_field(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "54321",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T12:00:00",
-        "event_data": {}
-    }
-    response = client.post("/events", json=event_data)
+@pytest.mark.asyncio
+async def test_create_event_missing_data(event_data):
+    del event_data["merchant_id"]
+    client = app.test_client
+    response = await client.post("/events", json=event_data)
     assert response.status_code == 422
 
-def test_create_event_invalid_channel(client):
-    event_data = {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "54321",
-        "merchant_id": "67890",
-        "amount": 100.0,
-        "transaction_date": "2022-01-01T12:00:00",
-        "event_data": {},
-        "channel": "invalid_channel"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_create_event_wrong_credentials(event_data):
+    client = app.test_client
+    response = await client.post("/events", json=event_data, headers={"Authorization": "Bearer wrong_token"})
+    assert response.status_code == 401
