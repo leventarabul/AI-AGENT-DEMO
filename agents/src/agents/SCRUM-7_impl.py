@@ -1,31 +1,10 @@
-# demo-domain/api_server.py
+# agents/src/clients/demo_domain_client.py
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
-import httpx
-
-app = FastAPI()
-
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: datetime
-    event_data: dict
-    channel: str
-
-@app.post("/events")
-async def create_event(event: Event):
-    # Call ai-management service to generate suggestion
-    async with httpx.AsyncClient() as client:
-        response = await client.post("http://ai-management:8001/generate", json={"prompt": f"Channel: {event.channel}"})
+async def register_event_with_channel(event_data: dict, channel: str) -> dict:
+    url = f"{DEMO_DOMAIN_URL}/events"
+    payload = {**event_data, "channel": channel}
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(url, json=payload, auth=(API_USERNAME, API_PASSWORD))
         response.raise_for_status()
-        suggestion = response.json()["suggestion"]
-
-    # Save event with channel information
-    # Replace this with actual DB saving logic
-    event_info = f"Event saved with channel: {event.channel}"
-    return {"message": event_info, "suggestion": suggestion}
+        return response.json()

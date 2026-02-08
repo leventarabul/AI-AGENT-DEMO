@@ -1,72 +1,38 @@
-# test_api_server.py
-
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch
-from api_server import app
+from unittest.mock import AsyncMock
 
 @pytest.fixture
-def client():
-    client = TestClient(app)
-    yield client
+def mock_http_client():
+    return AsyncMock()
 
-def test_create_event_success(client):
-    event_data = {
-        "event_code": "1234",
-        "customer_id": "5678",
-        "transaction_id": "91011",
-        "merchant_id": "1213",
-        "amount": 100.0,
-        "transaction_date": "2023-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 200
-    assert "message" in response.json()
-    assert "suggestion" in response.json()
+@pytest.mark.asyncio
+async def test_register_event_with_channel(mock_http_client):
+    event_data = {"name": "test_event", "date": "2022-01-01"}
+    channel = "test_channel"
+    
+    mock_http_client.post.return_value.json.return_value = {"status": "success"}
+    
+    result = await register_event_with_channel(event_data, channel)
+    
+    assert result == {"status": "success"}
 
-@patch('api_server.httpx.AsyncClient.post')
-def test_create_event_with_mocked_response(mock_post, client):
-    mock_post.return_value.json.return_value = {"suggestion": "Mocked suggestion"}
-    event_data = {
-        "event_code": "1234",
-        "customer_id": "5678",
-        "transaction_id": "91011",
-        "merchant_id": "1213",
-        "amount": 100.0,
-        "transaction_date": "2023-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 200
-    assert response.json()["suggestion"] == "Mocked suggestion"
+@pytest.mark.asyncio
+async def test_register_event_with_channel_edge_case(mock_http_client):
+    event_data = {"name": "test_event"}
+    channel = "test_channel"
+    
+    mock_http_client.post.return_value.json.return_value = {"status": "success"}
+    
+    result = await register_event_with_channel(event_data, channel)
+    
+    assert result == {"status": "success"}
 
-def test_create_event_missing_data(client):
-    event_data = {
-        "event_code": "1234",
-        "customer_id": "5678",
-        "transaction_id": "91011",
-        "merchant_id": "1213",
-        "amount": 100.0,
-        "transaction_date": "2023-01-01T00:00:00",
-        "event_data": {"key": "value"}
-        # Missing "channel" key
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 422
-
-def test_create_event_invalid_data(client):
-    event_data = {
-        "event_code": "1234",
-        "customer_id": "5678",
-        "transaction_id": "91011",
-        "merchant_id": "1213",
-        "amount": "invalid_amount",  # Invalid amount type
-        "transaction_date": "2023-01-01T00:00:00",
-        "event_data": {"key": "value"},
-        "channel": "web"
-    }
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_register_event_with_channel_error(mock_http_client):
+    event_data = {"name": "test_event", "date": "2022-01-01"}
+    channel = "test_channel"
+    
+    mock_http_client.post.side_effect = Exception("Error")
+    
+    with pytest.raises(Exception):
+        await register_event_with_channel(event_data, channel)
