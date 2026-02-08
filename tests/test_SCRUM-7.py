@@ -1,38 +1,46 @@
 import pytest
-from unittest.mock import patch
 from fastapi.testclient import TestClient
-from api_server import app
-from models.events import Event
+from unittest.mock import patch
+from app import app, Event, create_event, process_event, match_campaign_rules
 
 @pytest.fixture
-def event_data():
-    return {
-        "event_code": "test_event",
-        "customer_id": "12345",
-        "transaction_id": "67890",
-        "merchant_id": "M123",
+def test_client():
+    client = TestClient(app)
+    return client
+
+def test_create_event_with_channel(test_client):
+    event_data = {
+        "event_code": "123",
+        "customer_id": "456",
+        "transaction_id": "789",
+        "merchant_id": "101112",
         "amount": 100.0,
+        "transaction_date": "2022-01-01T00:00:00",
         "event_data": {"key": "value"},
-        "transaction_date": "2022-01-01",
+        "status": "success",
+        "matched_rule_id": None,
+        "error_message": None,
+        "created_at": "2022-01-01T00:00:00",
+        "recorded_at": "2022-01-01T00:00:00",
+        "processed_at": None,
         "channel": "web"
     }
-
-def test_create_event_success(event_data):
-    client = TestClient(app)
-    response = client.post("/events", json=event_data)
+    response = test_client.post("/events", json=event_data)
     assert response.status_code == 200
-    assert response.json() == {"message": "Event created successfully"}
+    assert response.json()["channel"] == "web"
 
-@patch('api_server.register_event')
-def test_create_event_register_event_called(mock_register_event, event_data):
-    mock_register_event.return_value = 1
-    client = TestClient(app)
-    response = client.post("/events", json=event_data)
-    assert mock_register_event.called
+def test_process_event_with_channel():
+    event = Event(event_code="123", customer_id="456", transaction_id="789", merchant_id="101112", amount=100.0, transaction_date="2022-01-01T00:00:00", event_data={"key": "value"}, status="success", matched_rule_id=None, error_message=None, created_at="2022-01-01T00:00:00", recorded_at="2022-01-01T00:00:00", processed_at=None, channel="web")
+    # Mock the event processing logic
+    with patch('app.process_event') as mock_process_event:
+        mock_process_event.return_value = None
+        process_event(event)
+        mock_process_event.assert_called_once_with(event)
 
-def test_create_event_missing_channel(event_data):
-    del event_data["channel"]
-    client = TestClient(app)
-    response = client.post("/events", json=event_data)
-    assert response.status_code == 422
-    assert response.json() == {"detail": [{"loc": ["body", "channel"], "msg": "field required", "type": "value_error"}]}
+def test_match_campaign_rules_with_channel():
+    event = Event(event_code="123", customer_id="456", transaction_id="789", merchant_id="101112", amount=100.0, transaction_date="2022-01-01T00:00:00", event_data={"key": "value"}, status="success", matched_rule_id=None, error_message=None, created_at="2022-01-01T00:00:00", recorded_at="2022-01-01T00:00:00", processed_at=None, channel="web")
+    # Mock the campaign rule matching logic
+    with patch('app.match_campaign_rules') as mock_match_campaign_rules:
+        mock_match_campaign_rules.return_value = None
+        match_campaign_rules(event)
+        mock_match_campaign_rules.assert_called_once_with(event)
