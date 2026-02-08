@@ -1,34 +1,23 @@
-# Add a new field 'channel' to the events table in the database
-ALTER TABLE events ADD COLUMN channel VARCHAR(255);
+import logging
+from fastapi import FastAPI
 
-# Update the API endpoint to accept 'channel' in the request payload
-@app.post("/events")
-async def create_event(event: Event):
-    # Extract channel from the request payload
-    channel = event.channel
-    # Save the event to the database with the channel information
+# Initialize FastAPI app
+app = FastAPI()
 
-# Update the Event model to include the new 'channel' field
-class Event(BaseModel):
-    event_code: str
-    customer_id: str
-    transaction_id: str
-    merchant_id: str
-    amount: float
-    transaction_date: datetime
-    event_data: dict
-    channel: str
+# Logger configuration
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Update the database query to include the 'channel' field when inserting events
-async def save_event_to_db(event: Event):
-    query = events.insert().values(
-        event_code=event.event_code,
-        customer_id=event.customer_id,
-        transaction_id=event.transaction_id,
-        merchant_id=event.merchant_id,
-        amount=event.amount,
-        transaction_date=event.transaction_date,
-        event_data=event.event_data,
-        channel=event.channel
-    )
-    await database.execute(query)
+# Define API endpoint for receiving event channel information
+@app.post("/event/channel")
+async def receive_event_channel(channel: str):
+    try:
+        # Log the received channel information
+        logger.info(f"Received event channel: {channel}")
+        
+        # Any additional business logic can be added here
+        
+        return {"message": "Event channel information received successfully"}
+    except Exception as e:
+        logger.error(f"Error processing event channel: {e}")
+        return {"message": "Error processing event channel"}

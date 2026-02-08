@@ -1,45 +1,31 @@
 import pytest
-from unittest.mock import MagicMock
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+
+from main import app
 
 @pytest.fixture
-def mock_event():
-    return Event(
-        event_code="123",
-        customer_id="456",
-        transaction_id="789",
-        merchant_id="987",
-        amount=100.0,
-        transaction_date=datetime.now(),
-        event_data={"key": "value"},
-        channel="web"
-    )
+def client():
+    return TestClient(app)
 
-def test_create_event_endpoint_success(client, mock_event):
-    response = client.post("/events", json=mock_event.dict())
+def test_receive_event_channel_success(client):
+    response = client.post("/event/channel", json={"channel": "test_channel"})
     assert response.status_code == 200
+    assert response.json() == {"message": "Event channel information received successfully"}
 
-def test_save_event_to_db_success(mock_event):
-    mock_execute = MagicMock()
-    database.execute = mock_execute
+def test_receive_event_channel_error(client):
+    response = client.post("/event/channel", json={"channel": ""})
+    assert response.status_code == 200
+    assert response.json() == {"message": "Error processing event channel"}
 
-    save_event_to_db(mock_event)
+@patch('main.logger')
+def test_receive_event_channel_log_info(mock_logger, client):
+    response = client.post("/event/channel", json={"channel": "test_channel"})
+    assert response.status_code == 200
+    mock_logger.info.assert_called_with("Received event channel: test_channel")
 
-    mock_execute.assert_called_once()
-
-def test_create_event_endpoint_missing_channel(client, mock_event):
-    del mock_event.channel
-    response = client.post("/events", json=mock_event.dict())
-    assert response.status_code == 422
-
-def test_save_event_to_db_missing_channel(mock_event):
-    del mock_event.channel
-    with pytest.raises(Exception):
-        save_event_to_db(mock_event)
-
-def test_create_event_endpoint_invalid_data(client):
-    response = client.post("/events", json={"invalid": "data"})
-    assert response.status_code == 422
-
-def test_save_event_to_db_invalid_data():
-    with pytest.raises(Exception):
-        save_event_to_db(Event())
+@patch('main.logger')
+def test_receive_event_channel_log_error(mock_logger, client):
+    response = client.post("/event/channel", json={"channel": ""})
+    assert response.status_code == 200
+    mock_logger.error.assert_called()
