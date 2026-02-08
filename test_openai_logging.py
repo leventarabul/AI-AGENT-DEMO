@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 #!/usr/bin/env python3
 import asyncio
 import httpx
@@ -15,8 +17,8 @@ async def test():
             },
             timeout=60
         )
-        print(f"Response status: {resp.status_code}")
+        logger.info(f"Response status: {resp.status_code}")
         result = resp.json()
-        print(f"\nGenerated text:\n{result.get('text', '')[:300]}")
+        logger.info(f"\nGenerated text:\n{result.get('text', '')[:300]}")
 
 asyncio.run(test())

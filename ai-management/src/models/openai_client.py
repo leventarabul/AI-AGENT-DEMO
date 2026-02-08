@@ -76,7 +76,11 @@ class OpenAIClient(BaseLLMClient):
                 ) as response:
                     if response.status != 200:
                         error_data = await response.json()
-                        logger.error(f"\n❌ OPENAI ERROR (HTTP {response.status}):\n{json.dumps(error_data, indent=2)}")
+                        logger.error(
+                            f"\n"
+                            f"❌ OPENAI ERROR (HTTP {response.status}):\n"
+                            f"{json.dumps(error_data, indent=2)}"
+                        )
                         raise Exception(f"OpenAI API error: {error_data}")
                     
                     data = await response.json()

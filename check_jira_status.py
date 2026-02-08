@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 #!/usr/bin/env python3
 """Check Jira status of tasks"""
 
@@ -17,32 +19,32 @@ async def check_jira():
     )
     
     # Check for tasks in Code Review
-    print("Checking for tasks in Code Review...")
+    logger.info("Checking for tasks in Code Review...")
     issues = await client.search_issues('status = "Code Review" ORDER BY updated DESC')
     
     if issues:
-        print(f"\nFound {len(issues)} task(s) in Code Review:\n")
+        logger.info(f"\nFound {len(issues)} task(s) in Code Review:\n")
         for issue in issues[:5]:
             key = issue.get('key', 'N/A')
             summary = issue.get('fields', {}).get('summary', 'N/A')
             status = issue.get('fields', {}).get('status', {}).get('name', 'N/A')
-            print(f"  • {key}: {summary}")
-            print(f"    Status: {status}\n")
+            logger.info(f"  • {key}: {summary}")
+            logger.info(f"    Status: {status}\n")
     else:
-        print("No tasks in Code Review\n")
+        logger.info("No tasks in Code Review\n")
     
     # Check for Development Waiting
-    print("Checking for Development Waiting tasks...")
+    logger.info("Checking for Development Waiting tasks...")
     issues = await client.search_issues('status = "Development Waiting" ORDER BY updated DESC')
     
     if issues:
-        print(f"\nFound {len(issues)} Development Waiting task(s):\n")
+        logger.info(f"\nFound {len(issues)} Development Waiting task(s):\n")
         for issue in issues[:5]:
             key = issue.get('key', 'N/A')
             summary = issue.get('fields', {}).get('summary', 'N/A')
-            print(f"  • {key}: {summary}\n")
+            logger.info(f"  • {key}: {summary}\n")
     else:
-        print("No Development Waiting tasks\n")
+        logger.info("No Development Waiting tasks\n")
 
 if __name__ == "__main__":
     asyncio.run(check_jira())

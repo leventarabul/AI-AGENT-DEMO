@@ -21,7 +21,8 @@ async def test_register_event_success(event_data):
         response = await register_event(event_data)
         
         assert response == expected_response
-        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, auth=("admin", "admin123"))
+        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, \
+        auth=("admin", "admin123"))
 
 @pytest.mark.asyncio
 async def test_register_event_error(event_data):
@@ -32,4 +33,5 @@ async def test_register_event_error(event_data):
         with pytest.raises(Exception):
             await register_event(event_data)
         
-        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, auth=("admin", "admin123"))
+        mock_client.post.assert_called_once_with(f"{DEMO_DOMAIN_URL}/events", json=event_data, \
+        auth=("admin", "admin123"))

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Code review agent: Hardened implementation for SDLC pipeline.
 
 Reviews code changes against architecture rules, coding standards, and edge cases.
@@ -83,7 +85,7 @@ class ArchitectureRules:
     RULES = {
         "no_print_statements": {
             "pattern": r"print\(",
-            "message": "Direct print() calls not allowed; use logging",
+            "message": "Direct logger.info() calls not allowed; use logging",
         },
         "no_hardcoded_paths": {
             "pattern": r'["\']/(app|root|home)/\w+',

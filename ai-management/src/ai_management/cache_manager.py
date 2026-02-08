@@ -4,6 +4,8 @@ import hashlib
 import json
 from dataclasses import asdict, is_dataclass
 from typing import Optional, Dict, Any
+import logging
+logger = logging.getLogger(__name__)
 
 
 class CacheManager:
@@ -26,7 +28,7 @@ class CacheManager:
             # Test connection
             await self.redis_client.ping()
         except Exception as e:
-            print(f"Warning: Could not connect to Redis: {e}")
+            logger.info(f"Warning: Could not connect to Redis: {e}")
             self.redis_client = None
     
     async def disconnect(self):
@@ -51,7 +53,7 @@ class CacheManager:
                 return json.loads(cached)
             return None
         except Exception as e:
-            print(f"Cache get error: {e}")
+            logger.info(f"Cache get error: {e}")
             return None
     
     async def set(self, prompt: str, provider: str, model: str, response: Dict[str, Any]):
@@ -73,7 +75,7 @@ class CacheManager:
                 json.dumps(response)
             )
         except Exception as e:
-            print(f"Cache set error: {e}")
+            logger.info(f"Cache set error: {e}")
     
     async def clear(self) -> int:
         """Clear all cached responses."""
@@ -86,7 +88,7 @@ class CacheManager:
                 return await self.redis_client.delete(*keys)
             return 0
         except Exception as e:
-            print(f"Cache clear error: {e}")
+            logger.info(f"Cache clear error: {e}")
             return 0
     
     async def health(self) -> bool:

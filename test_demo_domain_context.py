@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 #!/usr/bin/env python3
 """Test that agents understand demo-domain context"""
 import asyncio
@@ -18,22 +20,22 @@ async def main():
         labels=["demo-domain", "backend"]
     )
     
-    print("✅ Prompt structure check:")
-    print(f"  - Total prompt size: {len(prompt)} bytes")
-    print(f"  - Has demo-domain API: {'Demo-Domain API Examples' in prompt}")
-    print(f"  - Has database schema: {'database' in prompt.lower()}")
-    print(f"  - Has campaigns table: {'campaigns' in prompt.lower()}")
+    logger.info("✅ Prompt structure check:")
+    logger.info(f"  - Total prompt size: {len(prompt)} bytes")
+    logger.info(f"  - Has demo-domain API: {'Demo-Domain API Examples' in prompt}")
+    logger.info(f"  - Has database schema: {'database' in prompt.lower()}")
+    logger.info(f"  - Has campaigns table: {'campaigns' in prompt.lower()}")
     
     # Extract just the relevant section to see what demo-domain context looks like
     start_idx = prompt.find("## Demo-Domain")
     if start_idx != -1:
         end_idx = prompt.find("\nTASK TITLE:", start_idx)
         demo_section = prompt[start_idx:end_idx]
-        print(f"\n📋 Demo-Domain Context Section ({len(demo_section)} bytes):")
-        print(demo_section[:500] + "...\n" if len(demo_section) > 500 else demo_section)
+        logger.info(f"\n📋 Demo-Domain Context Section ({len(demo_section)} bytes):")
+        logger.info(demo_section[:500] + "...\n" if len(demo_section) > 500 else demo_section)
     
     # Try to generate code
-    print("🤖 Testing code generation...")
+    logger.info("🤖 Testing code generation...")
     agent = JiraAgent(
         jira_url="http://localhost:8001",  # dummy
         jira_username="test",
@@ -47,12 +49,12 @@ async def main():
         labels=["demo-domain", "backend"]
     )
     
-    print(f"✅ Code generated: {len(result['code'])} bytes")
-    print(f"\nFirst 800 chars of generated code:")
-    print("```python")
-    print(result['code'][:800])
-    print("...")
-    print("```")
+    logger.info(f"✅ Code generated: {len(result['code'])} bytes")
+    logger.info(f"\nFirst 800 chars of generated code:")
+    logger.info("```python")
+    logger.info(result['code'][:800])
+    logger.info("...")
+    logger.info("```")
 
 if __name__ == "__main__":
     asyncio.run(main())

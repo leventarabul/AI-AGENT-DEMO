@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 if os.path.exists("/workspace"):
     BASE_DIR = "/workspace"
 else:
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    BASE_DIR = 
+        os.path.dirname(
+        os.path.dirname(
+        os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
 
 DOCS_DIR = os.path.join(BASE_DIR, "agents", "docs")
 

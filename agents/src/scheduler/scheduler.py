@@ -181,11 +181,54 @@ class AgentScheduler:
         try:
             from src.agents.code_review_agent import CodeReviewAgent
             from src.agents.code_review_agent import ReviewDecision, format_review_comment
+            from src.agents.development_agent import DevelopmentAgent
             
             logger.info(f"  🔍 Reviewing {issue_key} with CodeReviewAgent...")
             agent = CodeReviewAgent(repo_root=self.git_repo_path)
             code_files = self._collect_code_files_from_repo(self.git_repo_path)
+            if not code_files:
+                logger.warning(f"  ⚠️ No code files found to review for {issue_key}")
+                return
+
             result = await agent.review_pull_request(issue_key, code_files)
+
+            if result.decision in (ReviewDecision.BLOCK, ReviewDecision.REQUEST_CHANGES):
+                dev_agent = DevelopmentAgent()
+                code_changes = {path: content for path, content in code_files}
+                fix_context = {
+                    "jira_issue_key": issue_key,
+                    "jira_issue_status": "Code Review",
+                    "code_changes": code_changes,
+                    "auto_fix": True,
+                    "review_issues": result.issues,
+                }
+                fix_output = dev_agent.execute(fix_context)
+                if fix_output.success and fix_output.files:
+                    for file_change in fix_output.files:
+                        abs_path = os.path.join(self.git_repo_path, file_change.path)
+                        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+                        with open(abs_path, "w", encoding="utf-8") as f:
+                            f.write(file_change.content)
+
+                    try:
+                        subprocess.run(
+                            ["git", "add", "."],
+                            cwd=self.git_repo_path,
+                            check=False,
+                            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+                        )
+                        subprocess.run(
+                            ["git", "commit", "-m", f"fix({issue_key}): address code review feedback"],
+                            cwd=self.git_repo_path,
+                            check=False,
+                            env={**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
+                        )
+                    except Exception as e:
+                        logger.warning(f"  ⚠️ Auto-fix commit failed: {e}")
+
+                    code_files = self._collect_code_files_from_repo(self.git_repo_path)
+                    if code_files:
+                        result = await agent.review_pull_request(issue_key, code_files)
             logger.info(f"  ✅ {issue_key} reviewed successfully: {result.decision}")
 
             jira_client = await self._get_jira_client()
@@ -202,13 +245,25 @@ class AgentScheduler:
                     jira_client, issue_key, ["Testing", "Test Ready", "Ready for Testing"]
                 )
             elif result.decision == ReviewDecision.REQUEST_CHANGES:
-                await self._transition_issue_to_status(
-                    jira_client, issue_key, ["Waiting Development", "In Development", "To Do"]
-                )
+                retries = await self._update_retry_label(jira_client, issue_key, increment=True)
+                if retries >= 3:
+                    await self._transition_issue_to_status(
+                        jira_client, issue_key, ["Blocked", "On Hold"]
+                    )
+                else:
+                    await self._transition_issue_to_status(
+                        jira_client, issue_key, ["Waiting Development", "In Development", "To Do"]
+                    )
             else:
-                await self._transition_issue_to_status(
-                    jira_client, issue_key, ["Waiting Development", "In Development", "To Do", "Blocked"]
-                )
+                retries = await self._update_retry_label(jira_client, issue_key, increment=True)
+                if retries >= 3:
+                    await self._transition_issue_to_status(
+                        jira_client, issue_key, ["Blocked", "On Hold"]
+                    )
+                else:
+                    await self._transition_issue_to_status(
+                        jira_client, issue_key, ["Waiting Development", "In Development", "To Do", "Blocked"]
+                    )
         
         except Exception as e:
             logger.error(f"  ❌ Error reviewing {issue_key}: {e}")
@@ -307,6 +362,7 @@ class AgentScheduler:
         """Trigger TestingAgent for an issue."""
         try:
             from src.agents.testing_agent import TestingAgent
+            from src.agents.testing_agent import TestStatus
             
             logger.info(f"  🧪 Testing {issue_key} with TestingAgent...")
             agent = TestingAgent(repo_root=self.git_repo_path)
@@ -316,9 +372,46 @@ class AgentScheduler:
             logger.info(
                 f"  ✅ {issue_key} tested successfully: {status} ({summary})"
             )
+
+            jira_client = await self._get_jira_client()
+            if status == TestStatus.PASS:
+                await jira_client.add_comment(issue_key, f"✅ Tests passed: {summary}")
+                await self._transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Done", "Completed", "Resolved"],
+                )
+            else:
+                await jira_client.add_comment(issue_key, f"❌ Tests failed: {summary}")
+                await self._transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Waiting Development", "In Development", "To Do"],
+                )
         
         except Exception as e:
             logger.error(f"  ❌ Error testing {issue_key}: {e}")
+
+    async def _update_retry_label(self, jira_client: Any, issue_key: str, increment: bool) -> int:
+        try:
+            issue = await jira_client.get_issue(issue_key, fields="labels")
+            labels = issue.get("fields", {}).get("labels", [])
+            current = 0
+            for label in labels:
+                if label.startswith("ai-retry-"):
+                    try:
+                        current = int(label.split("ai-retry-")[-1])
+                    except ValueError:
+                        current = 0
+            if increment:
+                current += 1
+            updated = [l for l in labels if not l.startswith("ai-retry-")]
+            updated.append(f"ai-retry-{current}")
+            await jira_client.update_issue_fields(issue_key, {"labels": updated})
+            return current
+        except Exception as e:
+            logger.warning(f"  ⚠️ Retry label update failed for {issue_key}: {e}")
+            return 0
 
 # Global scheduler instance
 _scheduler_instance = None

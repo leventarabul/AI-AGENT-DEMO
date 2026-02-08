@@ -79,7 +79,7 @@ async def ai_event(request: AIEventRequest):
 
 async def _process_jira_task_in_background(issue_key: str):
     """Background task to process Jira issue with AI agent."""
-    print(f"\n🚀 [BACKGROUND] Starting task processing for {issue_key}")
+    logger.info(f"\n🚀 [BACKGROUND] Starting task processing for {issue_key}")
     try:
         agent = JiraAgent(
             jira_url=os.getenv("JIRA_URL"),
@@ -89,9 +89,9 @@ async def _process_jira_task_in_background(issue_key: str):
             git_repo_path=os.getenv("GIT_REPO_PATH", "/tmp/repo"),
         )
         result = await agent.process_task(issue_key)
-        print(f"✅ [BACKGROUND] Jira task {issue_key} processed successfully:\n{result}")
+        logger.info(f"✅ [BACKGROUND] Jira task {issue_key} processed successfully:\n{result}")
     except Exception as e:
-        print(f"❌ [BACKGROUND] Error processing Jira task {issue_key}: {e}")
+        logger.info(f"❌ [BACKGROUND] Error processing Jira task {issue_key}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -102,7 +102,7 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     Receive Jira webhook events.
     Filters for 'Development Waiting' status and dispatches to JiraAgent.
     """
-    print(f"🔔 Jira webhook received: {request.webhookEvent}")
+    logger.info(f"🔔 Jira webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -111,7 +111,7 @@ async def jira_webhook(request: JiraWebhookRequest, background_tasks: Background
     
     # Only process if in "Waiting Development" status
     if status == "Waiting Development":
-        print(f"  Task ready: {issue_key} ({issue_type})")
+        logger.info(f"  Task ready: {issue_key} ({issue_type})")
         # Dispatch to background task
         background_tasks.add_task(_process_jira_task_in_background, issue_key)
         return {
@@ -293,7 +293,7 @@ async def code_review_webhook(
     Receive code review webhook events.
     Filters for 'In Review' status, analyzes code, transitions to Testing or back to Development.
     """
-    print(f"🔍 Code review webhook received: {request.webhookEvent}")
+    logger.info(f"🔍 Code review webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -301,7 +301,7 @@ async def code_review_webhook(
     
     # Only process if in review-ready status (PR ready for review)
     if status in ("In Review", "Code Review", "Code Ready"):
-        print(f"  Reviewing: {issue_key}")
+        logger.info(f"  Reviewing: {issue_key}")
         
         # If code_files not provided, extract from PR
         code_files = request.code_files or []
@@ -324,16 +324,36 @@ async def code_review_webhook(
 async def _run_tests_in_background(issue_key: str, test_files: List[str] = None):
     """Background task to run tests with TestingAgent."""
     try:
-        agent = TestingAgent(
-            jira_url=os.getenv("JIRA_URL"),
-            jira_username=os.getenv("JIRA_USERNAME"),
-            jira_token=os.getenv("JIRA_API_TOKEN"),
-            repo_path=os.getenv("GIT_REPO_PATH", "."),
-        )
-        result = await agent.run_tests(issue_key, test_files)
-        print(f"✅ Testing for {issue_key} completed:\n{result}")
+        from src.agents.testing_agent import TestStatus
+        from src.clients.jira_client import JiraClient
+
+        repo_root = os.getenv("GIT_REPO_PATH", ".")
+        agent = TestingAgent(repo_root=repo_root)
+        result = agent.execute({"test_files": test_files, "test_path": "tests/"})
+        logger.info(f"✅ Testing for {issue_key} completed:\n{result}")
+
+        jira_url = os.getenv("JIRA_URL")
+        jira_username = os.getenv("JIRA_USERNAME")
+        jira_token = os.getenv("JIRA_API_TOKEN")
+        if jira_url and jira_username and jira_token:
+            jira_client = JiraClient(jira_url, jira_username, jira_token)
+            summary = getattr(result, "summary", "")
+            if result.status == TestStatus.PASS:
+                await jira_client.add_comment(issue_key, f"✅ Tests passed: {summary}")
+                await _transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Done", "Completed", "Resolved"],
+                )
+            else:
+                await jira_client.add_comment(issue_key, f"❌ Tests failed: {summary}")
+                await _transition_issue_to_status(
+                    jira_client,
+                    issue_key,
+                    ["Waiting Development", "In Development", "To Do"],
+                )
     except Exception as e:
-        print(f"❌ Error running tests for {issue_key}: {e}")
+        logger.info(f"❌ Error running tests for {issue_key}: {e}")
 
 
 class TestingWebhookRequest(BaseModel):
@@ -352,7 +372,7 @@ async def testing_webhook(
     Receive testing webhook events.
     Filters for 'Testing' status, runs tests, transitions to Done or back to Development.
     """
-    print(f"🧪 Testing webhook received: {request.webhookEvent}")
+    logger.info(f"🧪 Testing webhook received: {request.webhookEvent}")
     
     issue = request.issue
     issue_key = issue.get("key", "")
@@ -360,7 +380,7 @@ async def testing_webhook(
     
     # Only process if in "Testing" status
     if status == "Testing" or status == "Test Ready":
-        print(f"  Running tests: {issue_key}")
+        logger.info(f"  Running tests: {issue_key}")
         
         # Dispatch to background task
         background_tasks.add_task(_run_tests_in_background, issue_key, request.test_files)

@@ -3,10 +3,15 @@ import json
 import subprocess
 import tempfile
 import httpx
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 from src.knowledge.context_loader import build_ai_prompt
 from src.clients.jira_client import JiraClient
 from src.clients.ai_management_client import AIManagementClient
+from src.agents.code_review_agent import CodeReviewAgent, ReviewDecision, format_review_comment
+from src.agents.testing_agent import TestingAgent, TestStatus
+from src.agents.development_agent import DevelopmentAgent
+import logging
+logger = logging.getLogger(__name__)
 
 
 class JiraAgent:
@@ -31,13 +36,25 @@ class JiraAgent:
     
     async def process_task(self, issue_key: str) -> Dict[str, Any]:
         """Main orchestration: fetch task → generate code → gen tests → create PR."""
-        print(f"\n🚀 Processing Jira task: {issue_key}")
+        logger.info(f"\n🚀 Processing Jira task: {issue_key}")
         
         # Fetch issue details
         issue = await self.jira_client.get_issue(issue_key)
         task_title = issue.get("fields", {}).get("summary", "")
         task_description = issue.get("fields", {}).get("description", {})
         task_labels = issue.get("fields", {}).get("labels", [])
+        retry_count = self._get_retry_count(task_labels)
+        if retry_count >= 3:
+            await self.jira_client.add_comment(
+                issue_key,
+                "🚫 Retry limit reached (3). Blocking task to prevent infinite loop.",
+            )
+            await self._transition_to_status(issue_key, target_names=["Blocked", "On Hold"])
+            return {
+                "issue_key": issue_key,
+                "status": "blocked",
+                "reason": "retry_limit_reached",
+            }
 
         # Fetch reviewer comments (for fix context)
         comments = await self.jira_client.get_comments(issue_key)
@@ -55,9 +72,9 @@ class JiraAgent:
                 f"{reviewer_notes}"
             )
         
-        print(f"  Title: {task_title}")
+        logger.info(f"  Title: {task_title}")
         desc_preview = task_description[:100] + ("..." if len(task_description) > 100 else "")
-        print(f"  Description: {desc_preview}")
+        logger.info(f"  Description: {desc_preview}")
         
         # Step 1: Generate code
         code_result = await self.generate_code(
@@ -70,6 +87,42 @@ class JiraAgent:
             task_title, generated_code
         )
         generated_tests = tests_result.get("tests", "")
+
+        # Step 2.5: Code review + auto-fix loop BEFORE git commit
+        code_changes = self._build_code_changes(issue_key, generated_code, generated_tests)
+        review_result, code_changes = await self._run_code_review_with_retries(
+            issue_key,
+            code_changes,
+            max_attempts=2,
+        )
+        generated_code = code_changes.get(
+            f"agents/src/agents/{issue_key}_impl.py",
+            generated_code,
+        )
+        generated_tests = code_changes.get(
+            f"tests/test_{issue_key}.py",
+            generated_tests,
+        )
+
+        if review_result.decision != ReviewDecision.APPROVE:
+            await self.jira_client.add_comment(
+                issue_key,
+                "🚫 " + format_review_comment(review_result),
+            )
+            retry_count += 1
+            await self._update_retry_label(issue_key, task_labels, retry_count)
+            if retry_count >= 3:
+                await self._transition_to_status(issue_key, target_names=["Blocked", "On Hold"])
+            else:
+                await self._transition_to_status(
+                    issue_key,
+                    target_names=["Waiting Development", "In Development", "To Do"],
+                )
+            return {
+                "issue_key": issue_key,
+                "status": "review_failed",
+                "review_decision": review_result.decision.value,
+            }
         
         # Step 3: Commit and push
         branch_name = self._create_branch_name(issue_key, task_title)
@@ -96,6 +149,21 @@ class JiraAgent:
         await self._post_development_details(
             issue_key, task_title, generated_code, generated_tests, pr_info
         )
+
+        # Step 5.5: Run tests and update Jira status
+        test_result = self._run_tests(issue_key)
+        await self._post_testing_result(issue_key, test_result)
+        if test_result.status == TestStatus.PASS:
+            await self._clear_retry_label(issue_key, task_labels)
+            await self._transition_to_status(
+                issue_key,
+                target_names=["Done", "Completed", "Resolved"],
+            )
+        else:
+            await self._transition_to_status(
+                issue_key,
+                target_names=["Waiting Development", "In Development", "To Do"],
+            )
         
         # Step 6: Update Jira task status (only if we actually produced a PR in a git repo)
         can_post_success = self._is_git_repo() and pr_info.get("html_url") not in (None, "N/A")
@@ -105,7 +173,7 @@ class JiraAgent:
                 f"✅ AI Agent completed development:\n- Code generated and tested\n- PR created: {pr_info.get('html_url', 'N/A')}\n- Ready for code review"
             )
         else:
-            print("  ⚠️ Success comment skipped: missing git repo or PR info")
+            logger.info("  ⚠️ Success comment skipped: missing git repo or PR info")
         
         # Move issue to Code Review (fallback to In Review if not available)
         await self._transition_to_status(issue_key, target_names=["Code Review", "In Review", "Review"])        
@@ -132,18 +200,18 @@ class JiraAgent:
                 if target:
                     break
             if not target:
-                print(f"  ⚠️ No matching transition found for {target_names}; skipping status change")
+                logger.info(f"  ⚠️ No matching transition found for {target_names}; skipping status change")
                 return
             await self.jira_client.transition_issue(issue_key, transition_id=target.get("id"))
-            print(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
+            logger.info(f"  🔄 Transitioned '{issue_key}' to '{target.get('name')}'")
         except Exception as e:
-            print(f"  ⚠️ Transition error for {issue_key}: {e}")
+            logger.info(f"  ⚠️ Transition error for {issue_key}: {e}")
     
     async def generate_code(
         self, task_title: str, task_description: str, labels: list
     ) -> Dict[str, str]:
         """Use AI to generate code for the task."""
-        print(f"  📝 Generating code...")
+        logger.info(f"  📝 Generating code...")
         
         # Build context with existing codebase
         prompt = build_ai_prompt(task_title, task_description, labels)
@@ -160,6 +228,7 @@ class JiraAgent:
             "3. Add type hints\n"
             "4. Output ONLY the code, no explanations\n"
             "5. Start with ```python and end with ```\n"
+            "6. NEVER use logger.info(); always use the logging module\n"
         )
         
         response = await self.ai_client.generate(
@@ -178,7 +247,7 @@ class JiraAgent:
         self, task_title: str, code: str
     ) -> Dict[str, str]:
         """Use AI to generate unit tests for the code."""
-        print(f"  🧪 Generating tests...")
+        logger.info(f"  🧪 Generating tests...")
         
         test_prompt = (
             f"Task: {task_title}\n\n"
@@ -212,7 +281,7 @@ class JiraAgent:
         task_title: str,
     ) -> str:
         """Commit code and tests to git, push to remote."""
-        print(f"  🔧 Committing and pushing...")
+        logger.info(f"  🔧 Committing and pushing...")
         
         # Create branch
         # If repo is not a git repository, skip git operations
@@ -253,7 +322,7 @@ class JiraAgent:
             # Push to remote
             self._run_git(["push", "-u", "origin", branch_name])
         else:
-            print("  ⚠️ No git repo detected; files written without commit/push")
+            logger.info("  ⚠️ No git repo detected; files written without commit/push")
         
         return commit_sha
 
@@ -306,7 +375,7 @@ class JiraAgent:
             async with httpx.AsyncClient(timeout=30) as client:
                 await client.post(deploy_url, json=payload)
         except Exception as e:
-            print(f"  ⚠️ Deploy webhook failed: {e}")
+            logger.info(f"  ⚠️ Deploy webhook failed: {e}")
     
     async def create_pull_request(
         self,
@@ -316,18 +385,59 @@ class JiraAgent:
         issue_key: str,
     ) -> Dict[str, Any]:
         """Create a pull request on GitHub (or similar)."""
-        print(f"  📤 Creating pull request...")
-        
-        # This is a placeholder; real implementation would call GitHub API
-        # For now, we just return mock PR info
-        pr_info = {
-            "branch": branch_name,
+        logger.info(f"  📤 Creating pull request...")
+        token = os.getenv("GITHUB_TOKEN") or os.getenv("GIT_TOKEN")
+        owner, repo = self._parse_github_repo()
+        base_branch = os.getenv("GITHUB_BASE_BRANCH", "main")
+
+        if not token or not owner or not repo:
+            return {
+                "branch": branch_name,
+                "title": f"[{issue_key}] {task_title}",
+                "description": task_description,
+                "html_url": "N/A",
+            }
+
+        payload = {
             "title": f"[{issue_key}] {task_title}",
-            "description": task_description,
-            "html_url": f"https://github.com/example/repo/pull/1",  # Mock
+            "head": branch_name,
+            "base": base_branch,
+            "body": task_description or "",
         }
-        
-        return pr_info
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"https://api.github.com/repos/{owner}/{repo}/pulls",
+                    json=payload,
+                    headers=headers,
+                )
+                if resp.status_code == 201:
+                    data = resp.json()
+                    return {
+                        "branch": branch_name,
+                        "title": data.get("title"),
+                        "description": data.get("body"),
+                        "html_url": data.get("html_url"),
+                    }
+                return {
+                    "branch": branch_name,
+                    "title": f"[{issue_key}] {task_title}",
+                    "description": task_description,
+                    "html_url": "N/A",
+                }
+        except Exception:
+            return {
+                "branch": branch_name,
+                "title": f"[{issue_key}] {task_title}",
+                "description": task_description,
+                "html_url": "N/A",
+            }
     
     def _extract_code_block(self, text: str) -> str:
         """Extract code from markdown code block."""
@@ -390,6 +500,117 @@ class JiraAgent:
         """Create a git branch name from issue key and title."""
         title_slug = task_title.lower().replace(" ", "-")[:30]
         return f"feat/{issue_key}/{title_slug}".lower()
+
+    def _build_code_changes(self, issue_key: str, code: str, tests: str) -> Dict[str, str]:
+        return {
+            f"agents/src/agents/{issue_key}_impl.py": code,
+            f"tests/test_{issue_key}.py": tests,
+        }
+
+    async def _run_code_review_with_retries(
+        self,
+        issue_key: str,
+        code_changes: Dict[str, str],
+        max_attempts: int = 2,
+    ) -> Tuple[Any, Dict[str, str]]:
+        review_agent = CodeReviewAgent(repo_root=self.git_repo_path)
+        dev_agent = DevelopmentAgent()
+
+        latest_result = review_agent.execute(
+            {"jira_issue_key": issue_key, "code_changes": code_changes}
+        )
+        attempts = 0
+
+        while (
+            latest_result.decision in (ReviewDecision.BLOCK, ReviewDecision.REQUEST_CHANGES)
+            and attempts < max_attempts
+        ):
+            fix_context = {
+                "jira_issue_key": issue_key,
+                "jira_issue_status": "Development",
+                "code_changes": code_changes,
+                "auto_fix": True,
+                "review_issues": latest_result.issues,
+            }
+            fix_output = dev_agent.execute(fix_context)
+            if not fix_output.success:
+                break
+
+            code_changes = {f.path: f.content for f in fix_output.files}
+            latest_result = review_agent.execute(
+                {"jira_issue_key": issue_key, "code_changes": code_changes}
+            )
+            attempts += 1
+
+        return latest_result, code_changes
+
+    def _run_tests(self, issue_key: str) -> Any:
+        test_agent = TestingAgent(repo_root=self.git_repo_path)
+        return test_agent.execute(
+            {
+                "test_files": [f"tests/test_{issue_key}.py"],
+                "test_path": "tests/",
+            }
+        )
+
+    async def _post_testing_result(self, issue_key: str, result: Any) -> None:
+        if result.status == TestStatus.PASS:
+            await self.jira_client.add_comment(
+                issue_key,
+                f"✅ Tests passed: {result.summary}",
+            )
+            return
+
+        failure_lines = []
+        for failure in result.failures[:5]:
+            loc = f" ({failure.file_path})" if failure.file_path else ""
+            failure_lines.append(f"- {failure.test_name}{loc}: {failure.error_message}")
+        details = "\n".join(failure_lines) if failure_lines else result.summary
+
+        await self.jira_client.add_comment(
+            issue_key,
+            f"❌ Tests failed: {result.summary}\n{details}",
+        )
+
+    def _get_retry_count(self, labels: List[str]) -> int:
+        for label in labels or []:
+            if label.startswith("ai-retry-"):
+                try:
+                    return int(label.split("ai-retry-")[-1])
+                except ValueError:
+                    return 0
+        return 0
+
+    async def _update_retry_label(self, issue_key: str, labels: List[str], count: int) -> None:
+        updated = [l for l in (labels or []) if not l.startswith("ai-retry-")]
+        updated.append(f"ai-retry-{count}")
+        await self.jira_client.update_issue_fields(issue_key, {"labels": updated})
+
+    async def _clear_retry_label(self, issue_key: str, labels: List[str]) -> None:
+        updated = [l for l in (labels or []) if not l.startswith("ai-retry-")]
+        await self.jira_client.update_issue_fields(issue_key, {"labels": updated})
+
+    def _parse_github_repo(self) -> Tuple[Optional[str], Optional[str]]:
+        repo = os.getenv("GITHUB_REPOSITORY")
+        if repo and "/" in repo:
+            owner, name = repo.split("/", 1)
+            return owner, name
+
+        repo_url = os.getenv("GITHUB_REPO_URL") or os.getenv("GIT_REMOTE_URL")
+        if not repo_url:
+            return None, None
+
+        if repo_url.startswith("git@"):
+            repo_url = repo_url.split(":", 1)[-1]
+        if repo_url.startswith("https://"):
+            repo_url = repo_url.replace("https://", "", 1)
+        repo_url = repo_url.replace("github.com/", "")
+        if repo_url.endswith(".git"):
+            repo_url = repo_url[:-4]
+        if "/" in repo_url:
+            owner, name = repo_url.split("/", 1)
+            return owner, name
+        return None, None
     
     async def _post_development_details(
         self,
@@ -489,7 +710,7 @@ class JiraAgent:
             f"**Test Lines:** {len(tests.split(chr(10)))}\n"
         )
         await self.jira_client.add_comment(issue_key, comment)
-        print(f"  📝 Development details posted to {issue_key}")
+        logger.info(f"  📝 Development details posted to {issue_key}")
     
     def _extract_endpoints(self, code: str) -> list:
         """Extract API endpoints from code."""

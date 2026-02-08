@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Development agent for code generation and structured output.
 
 Responsible for:
@@ -154,7 +156,7 @@ class DevelopmentAgent:
         """Apply mechanical fixes based on code review issues.
 
         This focuses on deterministic, rule-based fixes:
-        - Replace print() with logging
+        - Replace logger.info() with logging
         - Wrap long lines
         """
         issues_by_file = self._group_issues_by_file(review_issues)
@@ -193,7 +195,7 @@ class DevelopmentAgent:
     def _has_print_violation(self, issues: List[Dict[str, Any]]) -> bool:
         for issue in issues:
             message = (issue.get("message") or "").lower()
-            if "print()" in message or "print" in message and "logging" in message:
+            if "logger.info()" in message or "print" in message and "logging" in message:
                 return True
         return False
 
