@@ -1,11 +1,29 @@
-# agents/src/clients/demo_domain_client.py
-
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import httpx
 
-async def update_event_channel(event_id: int, channel: str):
-    async with httpx.AsyncClient() as client:
-        url = f"http://demo-domain-api:8000/events/{event_id}"
-        payload = {"channel": channel}
-        headers = {"Content-Type": "application/json"}
-        response = await client.patch(url, json=payload, headers=headers)
-        response.raise_for_status()
+app = FastAPI()
+
+class EventRequest(BaseModel):
+    event_code: str
+    customer_id: str
+    transaction_id: str
+    merchant_id: str
+    amount: float
+    transaction_date: str
+    event_data: dict
+    channel: str
+
+@app.post("/events")
+async def create_event(event: EventRequest):
+    url = "http://localhost:8000/events"
+    payload = event.dict()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json=payload, auth=("admin", "admin123"))
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail="Event registration failed")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail="Error connecting to demo-domain service")
