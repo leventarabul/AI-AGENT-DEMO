@@ -6,6 +6,7 @@ import asyncio
 import os
 import logging
 import subprocess
+from dataclasses import asdict, is_dataclass
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
@@ -15,8 +16,9 @@ env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 from src.agents.event_agent import EventAgent
 from src.agents.jira_agent import JiraAgent
-from src.agents.code_review_agent import CodeReviewAgent
-from src.agents.testing_agent import TestingAgent
+from src.agents.code_review_agent import CodeReviewAgent, format_review_comment
+from src.agents.testing_agent import TestingAgent, TestStatus
+from src.agents.development_agent import DevelopmentAgent
 from src.middleware.webhook_middleware import verify_jira_webhook_signature
 from src.scheduler import get_scheduler
 
@@ -49,7 +51,171 @@ class AIEventRequest(BaseModel):
 class JiraWebhookRequest(BaseModel):
     """Jira webhook payload (simplified)."""
     webhookEvent: str
-    issue: Dict[str, Any]
+    issue: Optional[Dict[str, Any]] = None
+    issue_key: Optional[str] = None
+
+
+def _normalize_for_json(value: Any) -> Any:
+    """Convert dataclasses and Enums into JSON-serializable structures."""
+    if is_dataclass(value):
+        return _normalize_for_json(asdict(value))
+    if isinstance(value, dict):
+        return {k: _normalize_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_for_json(v) for v in value]
+    if hasattr(value, "value"):
+        return value.value
+    return value
+
+
+async def _add_jira_comment(
+    jira_client: Any,
+    issue_key: str,
+    comment: str,
+    dry_run: bool,
+) -> None:
+    """Add a Jira comment unless DRY_RUN is enabled."""
+    if dry_run:
+        logger.info(
+            "[DRY_RUN] Skipping Jira comment for %s: %s", issue_key, comment
+        )
+        return
+    await jira_client.add_comment(issue_key, comment)
+
+
+async def _transition_issue_to_done(
+    jira_client: Any,
+    issue_key: str,
+    dry_run: bool,
+) -> bool:
+    """Attempt to transition issue to Done/Closed; return True if successful."""
+    target_names = ["Done", "Closed", "Complete", "Completed", "Resolved"]
+    transitions = await jira_client.get_transitions(issue_key)
+    for name in target_names:
+        for transition in transitions:
+            if transition.get("name") == name:
+                if dry_run:
+                    logger.info(
+                        "[DRY_RUN] Skipping transition for %s to %s", issue_key, name
+                    )
+                    return True
+                await jira_client.transition_issue(issue_key, transition_id=transition.get("id"))
+                return True
+    return False
+
+
+async def run_mvp_jira_flow(issue_key: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run MVP Jira flow: Development → Code Review → Testing with Jira feedback."""
+    dry_run = os.getenv("DRY_RUN", "false").lower() in {"1", "true", "yes"}
+    errors: List[str] = []
+    payload = payload or {}
+
+    logger.info("Starting MVP Jira flow for %s", issue_key)
+
+    jira_client = JiraClient(
+        jira_url=os.getenv("JIRA_URL"),
+        username=os.getenv("JIRA_USERNAME"),
+        api_token=os.getenv("JIRA_API_TOKEN"),
+    )
+
+    issue = await jira_client.get_issue(issue_key, fields="summary,description,status")
+    fields = issue.get("fields", {}) if isinstance(issue, dict) else {}
+    summary = fields.get("summary", "")
+    description = fields.get("description", "")
+
+    # 1) DevelopmentAgent
+    development_agent = DevelopmentAgent(repo_root=os.getenv("GIT_REPO_PATH", "."))
+    development_context = {
+        "jira_issue_key": issue_key,
+        "jira_issue_status": fields.get("status", {}).get("name", "Development"),
+        "code_changes": payload.get("code_changes", {}),
+        "summary": summary,
+        "description": description,
+    }
+    development_result = development_agent.execute(development_context)
+    if not development_result.success:
+        errors.append(development_result.error or "Development failed")
+
+    logger.info(
+        "Development completed for %s (success=%s)",
+        issue_key,
+        development_result.success,
+    )
+
+    development_summary = (
+        f"Development output: success={development_result.success}, "
+        f"files={len(development_result.files)}, "
+        f"commit_message='{development_result.commit_message}'"
+    )
+    await _add_jira_comment(jira_client, issue_key, development_summary, dry_run)
+
+    # 2) CodeReviewAgent (with repo fallback)
+    code_review_agent = CodeReviewAgent(repo_root=os.getenv("GIT_REPO_PATH", "."))
+    code_files: List[Tuple[str, str]] = []
+    if development_result.files:
+        code_files = [(f.path, f.content) for f in development_result.files]
+    if not code_files:
+        code_files = _collect_code_files_from_repo(os.getenv("GIT_REPO_PATH", "."))
+    review_result = await code_review_agent.review_pull_request(issue_key, code_files)
+    if not review_result.success:
+        errors.append(review_result.error or "Code review failed")
+
+    logger.info(
+        "Code review completed for %s (success=%s, decision=%s)",
+        issue_key,
+        review_result.success,
+        review_result.decision,
+    )
+
+    review_summary = f"Code review summary:\n{format_review_comment(review_result)}"
+    await _add_jira_comment(jira_client, issue_key, review_summary, dry_run)
+
+    # 3) TestingAgent
+    testing_agent = TestingAgent(repo_root=os.getenv("GIT_REPO_PATH", "."))
+    testing_result = testing_agent.execute({"test_path": "tests/"})
+    if not testing_result.success:
+        errors.append(testing_result.error or "Testing failed")
+
+    logger.info(
+        "Testing completed for %s (success=%s, status=%s)",
+        issue_key,
+        testing_result.success,
+        testing_result.status,
+    )
+
+    testing_summary = (
+        f"Test summary: status={testing_result.status.value}, "
+        f"passed={testing_result.passed_count}, failed={testing_result.failed_count}, "
+        f"summary='{testing_result.summary}'"
+    )
+    await _add_jira_comment(jira_client, issue_key, testing_summary, dry_run)
+
+    completed = testing_result.success and testing_result.status == TestStatus.PASS
+    if completed:
+        transitioned = await _transition_issue_to_done(jira_client, issue_key, dry_run)
+        if not transitioned:
+            await _add_jira_comment(
+                jira_client,
+                issue_key,
+                "manual transition needed: no Done/Closed transition found. "
+                "Please transition the issue manually in Jira.",
+                dry_run,
+            )
+
+    # Response fields:
+    # - development: DevelopmentAgent output (success, files, commit_message, error)
+    # - review: CodeReviewResult output (decision, issues, reasoning, error)
+    # - testing: TestResult output (status, counts, summary, error)
+    # - completed: True only when tests pass successfully
+    # - errors: Collected errors across stages
+    return {
+        "issue_key": issue_key,
+        "development": _normalize_for_json(development_result),
+        "review": _normalize_for_json(review_result),
+        "testing": _normalize_for_json(testing_result),
+        "completed": completed,
+        "errors": errors,
+    }
 
 @app.post("/ai-events")
 async def ai_event(request: AIEventRequest):
@@ -99,33 +265,27 @@ async def _process_jira_task_in_background(issue_key: str):
 @app.post("/webhooks/jira")
 async def jira_webhook(request: JiraWebhookRequest, background_tasks: BackgroundTasks):
     """
-    Receive Jira webhook events.
-    Filters for 'Development Waiting' status and dispatches to JiraAgent.
+    Receive Jira webhook events and run MVP Jira flow end-to-end.
     """
-    print(f"🔔 Jira webhook received: {request.webhookEvent}")
-    
-    issue = request.issue
-    issue_key = issue.get("key", "")
-    issue_type = issue.get("fields", {}).get("issuetype", {}).get("name", "")
+    logger.info("Jira webhook received: %s", request.webhookEvent)
+
+    issue = request.issue or {}
+    issue_key = request.issue_key or issue.get("key", "")
     status = issue.get("fields", {}).get("status", {}).get("name", "")
-    
-    # Only process if in "Waiting Development" status
-    if status == "Waiting Development":
-        print(f"  Task ready: {issue_key} ({issue_type})")
-        # Dispatch to background task
-        background_tasks.add_task(_process_jira_task_in_background, issue_key)
-        return {
-            "status": "accepted",
-            "issue_key": issue_key,
-            "message": "Task dispatched to background processing"
-        }
-    else:
+
+    if not issue_key:
+        raise HTTPException(status_code=400, detail="issue_key is required")
+
+    if status and status != "Waiting Development":
         return {
             "status": "skipped",
             "issue_key": issue_key,
             "status_current": status,
             "message": "Only 'Development Waiting' status is processed"
         }
+
+    result = await run_mvp_jira_flow(issue_key, payload=request.dict())
+    return result
 
 
 async def _review_code_in_background(issue_key: str, code_files: List[Tuple[str, str]]):
